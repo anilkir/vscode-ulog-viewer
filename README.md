@@ -1,75 +1,40 @@
-# PX4 ULog Viewer for VS Code
+# PX4 ULog Viewer
 
-View PX4 ULog (`.ulg` / `.ulog`) flight logs directly inside VS Code: opening a
-log file shows a visual viewer instead of the binary contents.
+Open and inspect PX4 ULog flight logs (`.ulg` and `.ulog`) directly in VS Code.
+The extension replaces the binary file view with an interactive log viewer for
+quick flight-data inspection.
 
-## Features
+## Getting started
 
-- **Activity bar view** — a ULog Viewer icon in the activity bar lists every
-  `.ulg`/`.ulog` file in the workspace; click one to open it, or use the
-  toolbar button to open a file from anywhere on disk.
-- **Plots** — browse all logged topics (with multi-instance support, e.g.
-  `sensor_accel [1]`), click any numeric field to plot it. Click "+ Add Plot"
-  to stack additional plot panels in a column, each with its own set of
-  series (up to 8) — useful for comparing different signals side by side.
-  Every panel's time axis stays zoom/pan-synced with the others so
-  relationships between signals are easy to read off; drag to zoom,
-  double-click or "Reset zoom" to reset.
-- **Info** — file metadata, duration, software/hardware versions and all ULog
-  information entries.
-- **Parameters** — searchable table of all logged parameters, including any
-  mid-flight parameter changes (e.g. an in-flight calibration or GCS-driven
-  tune) with a change count badge that expands into a time-stamped history.
-- **Messages** — the on-board log console (`PX4_INFO` / `PX4_WARN` /
-  `PX4_ERR`, …) with level badges.
+1. Install **PX4 ULog Viewer** from the VS Code Marketplace.
+2. Open a folder containing a `.ulg` or `.ulog` log file.
+3. Open the log file from the Explorer, or select the **ULog Viewer** icon in
+   the Activity Bar and choose a file from the list.
 
-## Development
+You can also run **ULog Viewer: Open ULog File** from the Command Palette to
+open a log from anywhere on disk.
 
-```sh
-npm install
-npm run build      # bundle extension + webview into dist/
-npm run watch      # rebuild on change
-npm run typecheck  # tsc --noEmit
-```
+## Explore a flight log
 
-Press **F5** in VS Code ("Run Extension") to launch an Extension Development
-Host, then open any `.ulg` file. Press **ctrl+R** on an open Extension Development
-Host to reload it during development.
+The viewer provides the following sections:
 
-## Architecture
+- **Plots** — browse logged topics and select numeric fields to chart them.
+  Add plot panels to compare signals; their time axes stay synchronized.
+  Drag to zoom, double-click a chart, or select **Reset zoom** to restore the
+  full time range.
+- **Info** — review log metadata, duration, software and hardware versions,
+  and information entries recorded by the vehicle.
+- **Parameters** — search logged parameters and inspect any values that
+  changed during flight, including their timestamped history.
+- **Messages** — view the onboard log console, including `PX4_INFO`,
+  `PX4_WARN`, and `PX4_ERR` messages.
 
-- `src/extension.ts` — activation; registers the custom editor and the
-  activity bar tree view.
-- `src/ulogTreeProvider.ts` — the "ULog Files" tree view and its open-file
-  commands.
-- `src/ulogEditorProvider.ts` — `CustomReadonlyEditorProvider` for the
-  `ulogViewer.ulog` view type. Parses logs with
-  [`@foxglove/ulog`](https://github.com/foxglove/ulog) in the extension host,
-  builds a JSON summary for the webview, and serves time-series data on
-  demand (extracted once per topic, cached, transferred as `ArrayBuffer`s).
-- `src/ulogData.ts` — summary building and per-topic time-series extraction.
-- `src/paramScan.ts` — a single low-level pass over the data section (using
-  only `@foxglove/ulog`'s public primitives, not its full message parser) that
-  recovers the true flight time range and mid-flight parameter changes.
-  See the comment at the top of the file for why this can't be done through
-  the library's normal `readMessages()` API — in short, its full-struct
-  parser throws on some real-world non-PX4-native topics (companion-computer
-  metrics), and there's a latent bug in its `computeTimetampOffset` helper
-  that only surfaces for topics that don't put `timestamp` first.
-- `src/protocol.ts` — typed message protocol between host and webview.
-- `src/webview/main.ts` — the viewer UI; charts rendered with
-  [uPlot](https://github.com/leeoniya/uPlot), synced across plot panels via
-  its built-in cursor/scale sync.
+## Supported files
 
-Parsing stays in the extension host so the webview only ever receives
-display-ready data; new views (maps, flight-mode timelines, …) can be added by
-extending the protocol.
+PX4 ULog files with `.ulg` and `.ulog` extensions are supported. Logs remain
+on your machine; the extension reads them locally in VS Code.
 
-## Ideas for later
+## License
 
-- GPS ground track / map view
-- Flight-mode and failsafe timeline overlays on plots
-- Vehicle attitude / 3D view
-- Plot panel layouts (and selected series) persisted per file
-- Parameter diff between two logs
-- Downsampling for very large logs; streaming extraction with progress
+Copyright 2026 Anil Kircaliali. All rights reserved.
+
