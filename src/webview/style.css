@@ -1,0 +1,1637 @@
+/*
+ * ULog viewer webview styles.
+ * Chrome uses VS Code theme variables; plot series use a fixed categorical
+ * palette (light/dark variants) assigned in slot order, never cycled.
+ */
+
+:root {
+  --ulog-series-1: #2a78d6; /* blue */
+  --ulog-series-2: #008300; /* green */
+  --ulog-series-3: #e87ba4; /* magenta */
+  --ulog-series-4: #eda100; /* yellow */
+  --ulog-series-5: #1baf7a; /* aqua */
+  --ulog-series-6: #eb6834; /* orange */
+  --ulog-series-7: #4a3aa7; /* violet */
+  --ulog-series-8: #e34948; /* red */
+  --ulog-status-critical: #d03b3b;
+  --ulog-status-warning: #fab219;
+  /* Deliberately outside the series palette above, so a marker never reads
+   * as just another plotted line. */
+  --ulog-marker-1: #4d4d4d;
+  --ulog-marker-2: #a5389c;
+  --ulog-marker-3: #0f8b8d;
+}
+
+body.vscode-dark,
+body.vscode-high-contrast {
+  --ulog-series-1: #3987e5;
+  --ulog-series-2: #008300;
+  --ulog-series-3: #d55181;
+  --ulog-series-4: #c98500;
+  --ulog-series-5: #199e70;
+  --ulog-series-6: #d95926;
+  --ulog-series-7: #9085e9;
+  --ulog-series-8: #e66767;
+  --ulog-marker-1: #e8e8e8;
+  --ulog-marker-2: #d68ce0;
+  --ulog-marker-3: #4dd0d6;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+}
+
+.centered-note {
+  margin: 2em auto;
+  max-width: 40em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.error-note {
+  color: var(--vscode-errorForeground);
+}
+
+/* ---- Top bar ---------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  gap: 1em;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  flex: none;
+}
+
+.topbar .file-name {
+  font-weight: 600;
+}
+
+.topbar .file-meta {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.tabs button {
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--vscode-panelTitle-inactiveForeground);
+  font-family: inherit;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  padding: 4px 8px 6px;
+  cursor: pointer;
+}
+
+.tabs button:hover {
+  color: var(--vscode-panelTitle-activeForeground);
+}
+
+.tabs button.active {
+  color: var(--vscode-panelTitle-activeForeground);
+  border-bottom-color: var(--vscode-panelTitle-activeBorder);
+}
+
+/* ---- Tab panes -------------------------------------------------------- */
+
+.tab-pane {
+  flex: 1;
+  min-height: 0;
+  display: none;
+}
+
+.tab-pane.active {
+  display: flex;
+}
+
+.tab-pane.scroll {
+  overflow: auto;
+  flex-direction: column;
+  padding: 8px 12px;
+}
+
+/* Panes with a table: the filter/toolbar row stays fixed (never scrolls
+ * away), and only the table area beneath it scrolls. This also keeps each
+ * table's own sticky header flush with the top of ITS scroll container, with
+ * no other content competing for that top-of-scroll space. */
+.tab-pane.fixed-toolbar {
+  flex-direction: column;
+  padding: 8px 12px 0;
+  min-height: 0;
+}
+
+.tab-pane.fixed-toolbar > .filter-box,
+.tab-pane.fixed-toolbar > .pane-toolbar,
+.tab-pane.fixed-toolbar > .pane-fixed {
+  flex: none;
+  padding-bottom: 8px;
+}
+
+.pane-fixed h3.section:first-child {
+  margin-top: 0;
+}
+
+.table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+/* Structure tab: one long scrollable page of several tables, rather than a
+ * fixed toolbar + single table — same no-top-padding-on-the-scroller
+ * reasoning as .table-scroll, see buildStructurePane's own comment. */
+.structure-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 8px;
+}
+
+/* ---- Plots tab -------------------------------------------------------- */
+
+.sidebar {
+  width: 280px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar-resizer {
+  flex: none;
+  width: 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: var(--vscode-panel-border);
+}
+
+.sidebar-resizer:hover::after,
+body.resizing-sidebar .sidebar-resizer::after {
+  background: var(--vscode-focusBorder);
+}
+
+body.resizing-sidebar,
+body.resizing-column {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.sidebar .filter-box {
+  padding: 8px;
+  flex: none;
+}
+
+.topic-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 4px 8px;
+}
+
+.topic-list details > summary {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  list-style-position: inside;
+}
+
+.topic-list details > summary:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.topic-list .topic-count {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  margin-left: 4px;
+}
+
+.field-list {
+  padding-left: 18px;
+}
+
+.field-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: inherit;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-btn:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.field-btn::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: transparent;
+  border: 1px solid var(--vscode-descriptionForeground);
+  vertical-align: baseline;
+}
+
+.field-btn.active::before {
+  background: var(--series-color, var(--vscode-foreground));
+  border-color: var(--series-color, var(--vscode-foreground));
+}
+
+.field-btn.pending {
+  opacity: 0.5;
+}
+
+.field-type {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  margin-left: 6px;
+}
+
+.plot-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.plot-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  min-height: 22px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.plot-toolbar .spacer {
+  flex: 1;
+}
+
+.plot-toolbar button {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.plot-toolbar button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.plot-toolbar button.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.plot-toolbar button.primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.target-label {
+  color: var(--vscode-textLink-foreground);
+  white-space: nowrap;
+}
+
+.view-toolbar {
+  border-top: 1px solid var(--vscode-panel-border);
+  gap: 12px;
+  /* Time-axis controls and the saved-views group share this one row to
+   * save vertical space, but together they don't always fit a narrower
+   * editor pane — wrap to a second line rather than clipping/overflowing
+   * past the edge. */
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.saved-views-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.save-view-area {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.view-toolbar-label {
+  white-space: nowrap;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.segmented button {
+  background: none;
+  border: none;
+  border-radius: 0;
+  color: var(--vscode-foreground);
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--vscode-panel-border);
+}
+
+/* A light tint of the same blue as `.active` below, rather than a neutral
+ * gray, so hovering previews the color a click would produce. */
+.segmented button:hover {
+  background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+}
+
+.segmented button.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+/* Grayed out but not the native `disabled` attribute — see makeSegmented's
+ * doc comment for why (it would suppress the hover tooltip explaining why). */
+.segmented button.disabled {
+  color: var(--vscode-descriptionForeground);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.segmented button.disabled:hover {
+  background: none;
+}
+
+.toggle-btn {
+  background: none;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  color: var(--vscode-foreground);
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+/* Same light-blue-tint-of-`.active` treatment as `.segmented button:hover`
+ * above. Written as `.toggle-btn.icon-btn:hover` (rather than just
+ * `.toggle-btn:hover`) so it outweighs the plain `.icon-btn:hover` gray
+ * below regardless of source order, since every toggle button in this file
+ * carries both classes at once — and `:not(.active)` so that extra
+ * specificity doesn't turn around and outweigh `.toggle-btn.active` too,
+ * which should stay solid while hovered. */
+.toggle-btn.icon-btn:hover:not(.active) {
+  background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+}
+
+.toggle-btn.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+}
+
+/* Pre-existing gap: every toggle button lives inside a `.plot-toolbar`
+ * (see `.view-toolbar` below), and `.plot-toolbar button:hover`'s own
+ * element-type selector out-specifies plain `.toggle-btn.active` (which has
+ * none), so hovering an already-on button was falling through to that
+ * generic secondary-gray hover instead of staying solid blue. */
+.toggle-btn.active:hover {
+  background: var(--vscode-button-background);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 3px;
+  color: var(--vscode-foreground);
+  padding: 3px 6px;
+  line-height: 0;
+  cursor: pointer;
+}
+
+/* Plain (non-toggle) icon buttons, e.g. auto-range or prev/next — no
+ * "active" blue state to preview, so a neutral hover stays appropriate. */
+.icon-btn:not(.toggle-btn):hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.plots-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;
+}
+
+.plots-column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 8px 8px;
+}
+
+.plots-empty {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  padding: 3em;
+}
+
+.plot-panel {
+  flex: none;
+  height: 260px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  min-width: 0;
+}
+
+.plot-panel.focused {
+  border-color: var(--vscode-focusBorder);
+}
+
+.plot-panel.dragging {
+  opacity: 0.4;
+}
+
+.plot-panel-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.plot-panel-grip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  color: var(--vscode-descriptionForeground);
+}
+
+.plot-panel-grip:active {
+  cursor: grabbing;
+}
+
+.plot-panel-resizer {
+  flex: none;
+  height: 6px;
+  margin: -3px 0 0;
+  cursor: row-resize;
+  position: relative;
+  z-index: 1;
+}
+
+.plot-panel-resizer::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+}
+
+.plot-panel-resizer:hover::after,
+body.resizing-panel-height .plot-panel-resizer.active::after {
+  background: var(--vscode-focusBorder);
+}
+
+body.resizing-panel-height {
+  cursor: row-resize;
+  user-select: none;
+}
+
+.plot-panel-index {
+  flex: none;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+}
+
+.plot-panel-chips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.plot-panel-hint {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+.series-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--vscode-badge-background);
+  border-radius: 3px;
+  padding: 1px 4px 1px 6px;
+  font-size: 0.85em;
+  max-width: 220px;
+}
+
+.series-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--series-color);
+  flex: none;
+}
+
+.series-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.series-chip-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+
+.series-chip-remove:hover {
+  opacity: 1;
+}
+
+.plot-panel-remove {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 1.2em;
+  line-height: 1;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 3px;
+}
+
+.plot-panel-remove:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-errorForeground);
+}
+
+.plot-panel-yrange {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+}
+
+.yrange-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: text;
+}
+
+.yrange-field-label {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.yrange-input-wrap {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.yrange-input {
+  width: 60px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-right: none;
+  border-radius: 2px 0 0 2px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: 0.9em;
+  outline: none;
+}
+
+.yrange-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+/* Native number-input spinner arrows look out of place next to VS Code's
+ * own UI chrome — hide them in favor of the custom .yrange-stepper below.
+ * Up/Down arrow keys and scroll-to-step on a focused input still work. */
+.yrange-input::-webkit-outer-spin-button,
+.yrange-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.yrange-input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.yrange-stepper {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 0 2px 2px 0;
+  overflow: hidden;
+}
+
+.yrange-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  padding: 0;
+  background: var(--vscode-input-background);
+  color: var(--vscode-descriptionForeground);
+  border: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.yrange-step:first-child {
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.yrange-step:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.timezone-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timezone-field-label {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.timezone-select,
+.saved-view-select {
+  max-width: 220px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+  border-radius: 2px;
+  padding: 1px 4px;
+  font-family: inherit;
+  font-size: 0.9em;
+  outline: none;
+  cursor: pointer;
+}
+
+.timezone-select:focus,
+.saved-view-select:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+/* Only shrinks the expanded popup's rows (Chromium applies font-size to
+ * <option> independently of the closed control) — the closed select itself
+ * keeps the toolbar's normal 0.9em via the rule above. */
+.saved-view-select option {
+  font-size: 0.85em;
+}
+
+.chart-host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  padding: 0 8px 4px;
+  /* Backstop for when the live legend (hover values widen every entry,
+   * sometimes wrapping an extra row) grows taller than the canvas/legend
+   * height split can fully absorb even at its floor — a scrollbar here
+   * beats letting the overflow spill past the panel's own border. */
+  overflow-y: auto;
+}
+
+.plot-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  padding: 2em;
+}
+
+/* ---- uPlot theme overrides -------------------------------------------- */
+
+.u-legend {
+  font-size: 0.9em;
+  color: var(--vscode-foreground);
+}
+
+.u-legend .u-value {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.u-legend .u-marker {
+  border-radius: 50%;
+}
+
+/* uPlot's own defaults (4px all around per cell, 16px between series) are
+ * generous enough to visibly eat into chart height — computeChartSize()
+ * subtracts this legend's measured height from what's left for the canvas,
+ * so trimming this directly grows every chart. Line-height is the other
+ * half of that: unitless 1.5 inherited from `.uplot` computes against each
+ * cell's own (smaller) font-size, so it still pads the row well past what
+ * the 1px padding above implies. */
+.u-series > * {
+  padding: 1px 4px;
+  line-height: 1.2;
+}
+
+.u-inline tr {
+  margin-right: 6px;
+}
+
+/* Synced cursor: the vertical (time) line is meaningful across every panel,
+ * but the horizontal line only means something on the panel actually being
+ * hovered — elsewhere it's just a meaningless synced-by-percent artifact. */
+.plot-panel:not(.cursor-hover) .u-cursor-y {
+  display: none;
+}
+
+/* uPlot keeps its own hover crosshair/nearest-point highlight live during a
+ * marker drag (see setupMarkerDrag) — hidden everywhere for the duration
+ * rather than just in the panel being dragged in, since the cursor sync
+ * above mirrors it into every other panel too. `!important` because uPlot
+ * sets some of this positioning via inline style, which plain specificity
+ * can't outrank. */
+#app.dragging-marker .u-cursor-x,
+#app.dragging-marker .u-cursor-y,
+#app.dragging-marker .u-cursor-pt {
+  display: none !important;
+}
+
+/* The drag-to-zoom selection: a translucent band with a bright edge line at
+ * the start and end of the region, so the selected range reads clearly. */
+.u-select {
+  background: color-mix(in srgb, var(--vscode-focusBorder) 12%, transparent);
+  border-left: 2px solid var(--vscode-focusBorder);
+  border-right: 2px solid var(--vscode-focusBorder);
+  box-sizing: border-box;
+}
+
+/* Floating timestamp readouts at the two edges of an in-progress zoom drag. */
+.zoom-drag-label {
+  position: absolute;
+  top: 4px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-focusBorder);
+  color: var(--vscode-foreground);
+  font-size: 0.75em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 4px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.zoom-drag-label.drag-label-start {
+  transform: translateX(calc(-100% - 4px));
+}
+
+.zoom-drag-label.drag-label-end {
+  transform: translateX(4px);
+}
+
+/* A time marker: a thin colored line the user can drag, a small tag at the
+ * top showing its time (+ remove button), and a value readout below it —
+ * one row per series in that panel, at the marker's time. `.plot-marker-hit`
+ * is the actual (wider, invisible) drag target, matching `.col-resizer`'s
+ * hit-area-wider-than-the-visible-line pattern elsewhere in this file. */
+.plot-marker-hit {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  margin-left: -5px;
+  cursor: ew-resize;
+  z-index: 5;
+}
+
+.plot-marker-hit::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: var(--marker-color);
+  pointer-events: none;
+}
+
+.plot-marker-tag {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--marker-color);
+  color: var(--vscode-foreground);
+  font-size: 0.75em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 2px 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  z-index: 6;
+}
+
+.plot-marker-remove {
+  background: none;
+  border: none;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.plot-marker-remove:hover {
+  color: var(--vscode-foreground);
+}
+
+.plot-marker-values {
+  position: absolute;
+  top: 24px;
+  /* Offset to the right of the line by default — flipped to the left (see
+   * .marker-flip-left) when the line sits in the right half of the chart,
+   * so the box stays clear of the line and the panel edge either way. */
+  transform: translateX(6px);
+  background: color-mix(in srgb, var(--vscode-editor-background) 92%, transparent);
+  border: 1px solid var(--marker-color);
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 0.75em;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.plot-marker-values.marker-flip-left {
+  transform: translateX(calc(-100% - 6px));
+}
+
+.plot-marker-value-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.plot-marker-value-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* ---- Tables (info, parameters, messages) ------------------------------ */
+
+.filter-box input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 3px 6px;
+  font-family: inherit;
+  font-size: inherit;
+  outline: none;
+}
+
+.filter-box input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.tab-pane .filter-box {
+  padding: 0 0 8px;
+  max-width: 320px;
+}
+
+table.data {
+  /* `separate` + zero spacing (rather than `collapse`) avoids a Chromium
+   * rendering quirk where collapsed borders under a sticky header let a
+   * sliver of scrolled-under content peek through at the seam. */
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+table.data th {
+  text-align: left;
+  padding: 4px 12px 4px 4px;
+  border-bottom: 2px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--vscode-foreground) 6%, var(--vscode-editor-background));
+}
+
+table.data td {
+  padding: 2px 12px 2px 4px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  vertical-align: top;
+}
+
+/* Resizable columns (Parameters table): fixed layout + explicit <col>
+ * widths so dragging one column doesn't reflow the whole table. */
+table.resizable-columns {
+  table-layout: fixed;
+}
+
+table.resizable-columns th {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+table.resizable-columns td {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Kept entirely inside this <th>'s own box (no negative offset straddling
+ * the border) rather than overlapping the next column — `table.data th` is
+ * `position: sticky`, which gives each header its own stacking context, so
+ * a resizer reaching past the border lost the z-index fight to the *next*
+ * header's own sticky box regardless of its own z-index (stacking order
+ * between sibling positioned contexts is settled by DOM order once every
+ * other factor ties, not by a descendant's z-index reaching out of its
+ * parent's context). That left only a ~2px sliver of the intended 8px hit
+ * zone actually clickable. Staying inside the current header's box sidesteps
+ * the conflict entirely.
+ */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.col-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+}
+
+.col-resizer:hover::after,
+body.resizing-column .col-resizer.active::after {
+  background: var(--vscode-focusBorder);
+}
+
+table.data td.num {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+table.data td.key {
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Raw format-definition strings on the Structure tab — same font as .num,
+ * but without the numeric-specific tabular-nums/no-wrap (a format string is
+ * prose-length text, not a value to align in a column). */
+table.data td.mono {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+h3.section {
+  margin: 12px 0 6px;
+  font-size: 1em;
+}
+
+.pane-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  flex-wrap: wrap;
+}
+
+.pane-toolbar .spacer {
+  flex: 1;
+}
+
+.messages-count {
+  white-space: nowrap;
+}
+
+.messages-search {
+  max-width: 220px;
+}
+
+/* The base `.tab-pane .filter-box` rule's own 8px bottom padding (meant for
+ * a filter box sitting alone above a table) is more specific than
+ * `.messages-search`'s attempt to zero it, so it was still winning here and
+ * inflating this flex item's height — centering the input 4px above its
+ * siblings instead of level with them. A filter box living inside the
+ * toolbar row relies on the row's own gap/padding instead. */
+.pane-toolbar .filter-box {
+  padding: 0;
+}
+
+/* Match the segmented control's and buttons' effective height (1px border +
+ * 2px vertical padding each side) — the base .filter-box input's 3px
+ * padding was 2px taller, throwing off vertical alignment in this toolbar. */
+.pane-toolbar .filter-box input {
+  padding: 2px 6px;
+}
+
+.time-cell {
+  white-space: nowrap;
+}
+
+.time-cell-raw {
+  font-variant-numeric: tabular-nums;
+}
+
+.time-cell-alt {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  margin-left: 4px;
+}
+
+/* Its own line (not inline after .time-cell-alt like that one is after
+ * .time-cell-raw) — a full UTC datetime is too wide to share a line within
+ * the Time column's own width. Hidden unless the "UTC" toggle is on; the
+ * row's height (and vertical-align: top on the other cells) adjusts to fit
+ * it automatically, same as any other table row content. */
+.time-cell-utc {
+  display: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.messages-table.show-utc .time-cell-utc {
+  display: block;
+}
+
+.time-jump-input {
+  width: 90px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 2px;
+  padding: 2px 6px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: inherit;
+  outline: none;
+}
+
+.time-jump-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.pane-toolbar button {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  /* Transparent, not none: occupies the same 1px as the segmented control's
+   * and inputs' real borders, so all toolbar controls share one height. */
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-family: inherit;
+  /* `inherit`, not a literal size: `.pane-toolbar` above already scales to
+   * 0.9em, and `<button>` doesn't inherit font-size by default the way
+   * `font-family: inherit` above already has to work around — repeating
+   * "0.9em" here would compound to 0.81em, ending up shorter than the
+   * `.filter-box input` beside it (which only inherits the single 0.9em)
+   * and throwing off their vertical alignment. */
+  font-size: inherit;
+  cursor: pointer;
+}
+
+/* Light blue tint, matching the toggle/segmented buttons in the Plots
+ * toolbar, rather than the neutral secondary-hover gray — these buttons
+ * (Go, Prev/Next) have no "active" state of their own, but the request was
+ * to make Parameters/Messages hovers visually consistent with Plots'. */
+.pane-toolbar button:hover {
+  background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+}
+
+/* `:not(.toggle-btn)` repeated here (redundant in practice — pane-toolbar
+ * never holds a toggle button) purely to match the general
+ * `.icon-btn:not(.toggle-btn):hover` rule's specificity plus one, so this
+ * wins outright instead of depending on which rule happens to come later. */
+.pane-toolbar .icon-btn:not(.toggle-btn):hover {
+  background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
+}
+
+/* A plain on/off button living in a .pane-toolbar (e.g. Messages' "UTC"
+ * toggle) — not `.toggle-btn`, which is styled for the Plots/Time-axis
+ * toolbar specifically and would lose a specificity fight with
+ * `.pane-toolbar button`'s own background here. */
+.pane-toolbar button.active {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.pane-toolbar button.active:hover {
+  background: var(--vscode-button-background);
+}
+
+.pane-toolbar button.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pane-toolbar button.disabled:hover {
+  background: var(--vscode-button-secondaryBackground);
+}
+
+/* Same compounding-em fix as `.pane-toolbar button` above, scoped to avoid
+ * touching `.segmented button`'s general 0.9em, which the time-axis picker
+ * in `.view-toolbar` still relies on to match its sibling `.toggle-btn`s. */
+.pane-toolbar .segmented button {
+  font-size: inherit;
+}
+
+/* Briefly highlight a row jumped to via Prev/Next or "Jump to". */
+@keyframes row-flash {
+  from {
+    background: color-mix(in srgb, var(--vscode-focusBorder) 35%, transparent);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+.row-flash td {
+  animation: row-flash 900ms ease-out;
+}
+
+/* ---- Parameters pane --------------------------------------------------- */
+
+.params-stats {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+
+.params-hint {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.8em;
+  padding-bottom: 8px;
+  max-width: 70ch;
+}
+
+.stat-tile {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+  min-width: 7em;
+}
+
+.stat-value {
+  font-size: 1.3em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.params-toolbar {
+  padding-bottom: 8px;
+}
+
+.params-toolbar .filter-box {
+  max-width: 260px;
+  padding: 0;
+}
+
+.zebra-row {
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+table.zebra-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
+}
+
+.param-name {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+td.muted {
+  color: var(--vscode-descriptionForeground);
+}
+
+.value-changed {
+  color: var(--vscode-textLink-foreground);
+  font-weight: 600;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 0.85em;
+  font-weight: 600;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.badge.level-err {
+  background: var(--ulog-status-critical);
+  color: #ffffff;
+}
+
+.badge.level-warn {
+  background: var(--ulog-status-warning);
+  color: #1a1a19;
+}
+
+.badge.level-notice {
+  background: color-mix(in srgb, var(--ulog-series-5) 30%, var(--vscode-badge-background));
+  color: var(--vscode-foreground);
+}
+
+.badge.level-info {
+  background: color-mix(in srgb, var(--ulog-series-1) 30%, var(--vscode-badge-background));
+  color: var(--vscode-foreground);
+}
+
+.badge.level-debug {
+  background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  font-weight: 400;
+}
+
+.param-flags {
+  white-space: nowrap;
+}
+
+.badge.changed-param {
+  border: none;
+  cursor: pointer;
+  margin-left: 4px;
+  font-family: inherit;
+  background: var(--ulog-series-1);
+  color: #ffffff;
+}
+
+.param-history-container td {
+  padding: 0 12px 6px 4px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.param-history {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+  border-radius: 3px;
+  max-width: 320px;
+}
+
+.param-history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9em;
+}
+
+.param-history-time {
+  color: var(--vscode-descriptionForeground);
+}
+
+/* ---- Context menu ------------------------------------------------------ */
+
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--vscode-menu-background, var(--vscode-editor-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 4px;
+  min-width: 170px;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.9em;
+  padding: 5px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+}
+
+/* ---- Selectable table rows --------------------------------------------- */
+
+tr.row-selected td {
+  background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground, var(--vscode-focusBorder)) 22%, transparent);
+}
+
+/* ---- Modal dialog (Manage Saved Views) --------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(1px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: modal-fade-in 0.12s ease-out;
+}
+
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes modal-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.modal-dialog {
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 7px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  width: 400px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modal-pop-in 0.14s ease-out;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 10px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.modal-close-btn {
+  font-size: 1.3em;
+  width: 26px;
+  height: 26px;
+}
+
+.confirm-dialog {
+  width: 380px;
+}
+
+.confirm-dialog-body {
+  padding: 16px;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 16px 16px;
+}
+
+.confirm-dialog-actions button {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 3px;
+  padding: 4px 12px;
+  font-family: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+
+.confirm-dialog-actions button:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.confirm-dialog-actions button.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.confirm-dialog-actions button.primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.manage-views-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.manage-views-empty {
+  color: var(--vscode-descriptionForeground);
+  text-align: center;
+  padding: 28px 16px;
+  font-size: 0.9em;
+}
+
+.manage-view-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 4px;
+}
+
+.manage-view-row:not(:last-child) {
+  margin-bottom: 1px;
+}
+
+.manage-view-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.manage-view-name-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.manage-view-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manage-view-meta {
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.manage-view-actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  /* Only shown on hover/focus so the list reads as names first, actions on
+   * demand — matches the row-hover highlight rather than fighting it with
+   * a permanently-visible row of buttons on every line. */
+  opacity: 0;
+}
+
+.manage-view-row:hover .manage-view-actions,
+.manage-view-actions:focus-within {
+  opacity: 1;
+}
+
+.manage-view-actions .icon-btn {
+  border-color: transparent;
+}
+
+.manage-view-actions .icon-btn:hover {
+  border-color: var(--vscode-panel-border);
+}
+
+.manage-view-delete:hover {
+  color: var(--vscode-errorForeground);
+}

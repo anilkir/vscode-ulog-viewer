@@ -1,0 +1,91 @@
+{
+  "name": "vscode-ulog-viewer",
+  "displayName": "PX4 ULog Viewer",
+  "description": "View PX4 ULog (.ulg) flight logs: log info, parameters, messages and time-series plots.",
+  "version": "0.0.1",
+  "publisher": "anilkir",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Data Science"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "ulogViewer.ulog",
+        "displayName": "ULog Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.ulg"
+          },
+          {
+            "filenamePattern": "*.ulog"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ulogViewer",
+          "title": "ULog Viewer",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ulogViewer": [
+        {
+          "id": "ulogViewer.filesView",
+          "name": "ULog Files",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ulogViewer.openFile",
+        "title": "Open ULog File",
+        "icon": "$(folder-opened)",
+        "category": "ULog Viewer"
+      },
+      {
+        "command": "ulogViewer.refreshFiles",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "ULog Viewer"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ulogViewer.refreshFiles",
+          "when": "view == ulogViewer.filesView",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@foxglove/ulog": "^2.3.2",
+    "uplot": "^1.6.32"
+  }
+}
