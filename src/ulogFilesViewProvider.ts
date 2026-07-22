@@ -6,6 +6,52 @@ const FILE_GLOB = "**/*.{ulg,ulog}";
 const EXCLUDE_GLOB = "**/{node_modules,.git}/**";
 const RECENT_FILES_KEY = "ulogViewer.recentFiles";
 const MAX_RECENT_FILES = 15;
+/** Persisted URI of the folder picked via "Open Folder" — scanned in place
+ *  for ULog files without opening it as a VS Code workspace. */
+const PICKED_FOLDER_KEY = "ulogViewer.pickedFolder";
+/** Caps for the picked-folder scan, so pointing it at a huge tree can't hang
+ *  or flood the list. */
+const MAX_FOLDER_FILES = 2000;
+const MAX_FOLDER_DEPTH = 12;
+
+function isUlogName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.endsWith(".ulg") || lower.endsWith(".ulog");
+}
+
+/**
+ * Recursively collects ULog files under `folder` via the workspace fs API,
+ * so it works for any folder the user picks — not just folders that are part
+ * of the open VS Code workspace (which is all `findFiles` can search). Skips
+ * node_modules and dot-directories, and is bounded by depth and file count.
+ */
+async function scanFolderForUlogs(folder: vscode.Uri): Promise<vscode.Uri[]> {
+  const results: vscode.Uri[] = [];
+  const queue: { uri: vscode.Uri; depth: number }[] = [{ uri: folder, depth: 0 }];
+  while (queue.length > 0 && results.length < MAX_FOLDER_FILES) {
+    const { uri, depth } = queue.shift()!;
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(uri);
+    } catch {
+      continue; // unreadable dir (permissions, vanished) — just skip it
+    }
+    for (const [name, type] of entries) {
+      const child = vscode.Uri.joinPath(uri, name);
+      if ((type & vscode.FileType.Directory) !== 0) {
+        if (depth < MAX_FOLDER_DEPTH && name !== "node_modules" && !name.startsWith(".")) {
+          queue.push({ uri: child, depth: depth + 1 });
+        }
+      } else if ((type & vscode.FileType.File) !== 0 && isUlogName(name)) {
+        results.push(child);
+        if (results.length >= MAX_FOLDER_FILES) {
+          break;
+        }
+      }
+    }
+  }
+  return results;
+}
 
 export function openUlogFile(uri: vscode.Uri, viewColumn?: vscode.ViewColumn): void {
   void vscode.commands.executeCommand("vscode.openWith", uri, UlogEditorProvider.viewType, viewColumn);
@@ -63,6 +109,9 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
   private webviewView: vscode.WebviewView | undefined;
   private readonly watcher: vscode.FileSystemWatcher;
   private readonly tabsListener: vscode.Disposable;
+  /** Watches the currently-picked folder (if any) for ULog file changes;
+   *  recreated whenever the picked folder changes, disposed when cleared. */
+  private folderWatcher: vscode.FileSystemWatcher | undefined;
   /** Snapshot of open ULog tabs as of the last tab-change event — a URI
    *  present now but absent here is what just got opened, and gets recorded
    *  into the persisted "recently opened" list below. */
@@ -87,6 +136,47 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
     this.watcher.onDidDelete(() => this.refresh());
     this.watcher.onDidChange(() => this.refresh());
     this.tabsListener = vscode.window.tabGroups.onDidChangeTabs(() => this.onTabsChanged());
+    // Restore a folder picked in a previous session, so its section (and its
+    // watcher) come back on reload.
+    const savedFolder = this.globalState.get<string>(PICKED_FOLDER_KEY);
+    if (savedFolder) {
+      this.watchFolder(vscode.Uri.parse(savedFolder));
+    }
+  }
+
+  /** Prompts for a folder and remembers it — its ULog files then show in the
+   *  sidebar's folder section, without opening it as a VS Code workspace. */
+  async pickAndSetFolder(): Promise<void> {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Scan for ULog Files",
+    });
+    if (picked?.[0]) {
+      await this.globalState.update(PICKED_FOLDER_KEY, picked[0].toString());
+      this.watchFolder(picked[0]);
+      this.refresh();
+    }
+  }
+
+  /** Forgets the picked folder and hides its section. */
+  async clearFolder(): Promise<void> {
+    await this.globalState.update(PICKED_FOLDER_KEY, undefined);
+    this.folderWatcher?.dispose();
+    this.folderWatcher = undefined;
+    this.refresh();
+  }
+
+  private watchFolder(folder: vscode.Uri): void {
+    this.folderWatcher?.dispose();
+    // A folder outside the open workspace needs its own watcher, keyed to it
+    // via RelativePattern; the class-level `watcher` only sees workspace files.
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, "**/*.{ulg,ulog}"));
+    watcher.onDidCreate(() => this.refresh());
+    watcher.onDidDelete(() => this.refresh());
+    watcher.onDidChange(() => this.refresh());
+    this.folderWatcher = watcher;
   }
 
   private onTabsChanged(): void {
@@ -144,7 +234,19 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
     const workspace: SidebarFileEntry[] = workspaceUris
       .map((uri) => ({ uriString: uri.toString(), label: entryLabel(uri) }))
       .sort((a, b) => a.label.localeCompare(b.label));
-    void webviewView.webview.postMessage({ type: "update", open, recent, workspace });
+
+    const savedFolder = this.globalState.get<string>(PICKED_FOLDER_KEY);
+    let folder: SidebarFileEntry[] = [];
+    let folderPath: string | undefined;
+    if (savedFolder) {
+      const folderUri = vscode.Uri.parse(savedFolder);
+      folderPath = folderUri.fsPath;
+      folder = (await scanFolderForUlogs(folderUri))
+        .map((uri) => ({ uriString: uri.toString(), label: entryLabel(uri) }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    }
+
+    void webviewView.webview.postMessage({ type: "update", open, recent, workspace, folder, folderPath });
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -158,6 +260,12 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
       switch (message.type) {
         case "openFile":
           void pickAndOpenFile();
+          break;
+        case "openFolder":
+          void this.pickAndSetFolder();
+          break;
+        case "clearFolder":
+          void this.clearFolder();
           break;
         case "openExisting":
           openUlogFile(vscode.Uri.parse(message.uriString), message.viewColumn as vscode.ViewColumn | undefined);
@@ -184,7 +292,10 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
   <link rel="stylesheet" href="${distUri("sidebar.css")}">
 </head>
 <body>
-  <button id="openBtn" class="open-btn">Open ULog File</button>
+  <div class="actions">
+    <button id="openBtn" class="open-btn">Open ULog File</button>
+    <button id="openFolderBtn" class="open-btn secondary">Open Folder</button>
+  </div>
   <div id="sections"></div>
   <script nonce="${nonce}" src="${distUri("sidebar.js")}"></script>
 </body>
@@ -193,6 +304,7 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
 
   dispose(): void {
     this.watcher.dispose();
+    this.folderWatcher?.dispose();
     this.tabsListener.dispose();
   }
 }

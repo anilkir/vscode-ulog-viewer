@@ -10,6 +10,7 @@ export function activate(context: vscode.ExtensionContext): void {
     filesViewProvider,
     vscode.window.registerWebviewViewProvider(UlogFilesViewProvider.viewType, filesViewProvider),
     vscode.commands.registerCommand("ulogViewer.openFile", pickAndOpenFile),
+    vscode.commands.registerCommand("ulogViewer.openFolder", () => filesViewProvider.pickAndSetFolder()),
     vscode.commands.registerCommand("ulogViewer.refreshFiles", () => filesViewProvider.refresh()),
   );
 }

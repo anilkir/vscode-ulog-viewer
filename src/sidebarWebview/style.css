@@ -6,12 +6,16 @@ body {
   font-size: var(--vscode-font-size, 13px);
 }
 
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
 .open-btn {
-  display: block;
-  width: 100%;
+  flex: 1;
   box-sizing: border-box;
   padding: 8px;
-  margin-bottom: 4px;
   font-family: inherit;
   font-size: 1em;
   font-weight: 600;
@@ -26,13 +30,66 @@ body {
   background: var(--vscode-button-hoverBackground);
 }
 
+/* "Open Folder" is the lesser of the two actions — a slight, theme-independent
+   tint (some themes leave the secondary-button background unset, which would
+   render it as flat text) so it still reads as a button beside the primary. */
+.open-btn.secondary {
+  background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  color: var(--vscode-foreground);
+}
+
+.open-btn.secondary:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 20%, transparent);
+}
+
+/* Every section is a bordered, tinted card with an accent icon and a bright,
+   real-case header — uniform, and each clearly set off from the next. */
+.section-card {
+  margin-top: 10px;
+  padding: 3px 6px 5px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.28)));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+
 .section-header {
-  font-size: 0.85em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 2px 6px;
+  font-size: 0.9em;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  color: var(--vscode-foreground);
+}
+
+.section-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--vscode-textLink-foreground);
+}
+
+.section-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-clear {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  border-radius: 3px;
   color: var(--vscode-descriptionForeground);
-  margin: 12px 2px 4px;
+  font-size: 1em;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.folder-clear:hover {
+  background: var(--vscode-list-hoverBackground);
+  color: var(--vscode-foreground);
 }
 
 .file-row {

@@ -57,6 +57,12 @@
         "category": "ULog Viewer"
       },
       {
+        "command": "ulogViewer.openFolder",
+        "title": "Open Folder of ULog Files",
+        "icon": "$(folder)",
+        "category": "ULog Viewer"
+      },
+      {
         "command": "ulogViewer.refreshFiles",
         "title": "Refresh",
         "icon": "$(refresh)",
