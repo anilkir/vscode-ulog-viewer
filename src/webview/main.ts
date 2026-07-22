@@ -2142,6 +2142,16 @@ function appendFieldValues(wrap: HTMLElement, vals: FieldValueCount[], asTransit
     const v = el("span", cls, empty ? "(empty)" : value);
     if (!empty) {
       v.title = value;
+      // Values are truncated to one line by default (a top_metrics process
+      // command line can be hundreds of chars). Click one to expand it to its
+      // full, wrapped text — click again to collapse. Guarded so drag-
+      // selecting the text (to copy it) doesn't also toggle the expansion.
+      v.classList.add("string-clickable");
+      v.addEventListener("click", () => {
+        if ((window.getSelection()?.toString() ?? "") === "") {
+          v.classList.toggle("string-expanded");
+        }
+      });
     }
     // A count only adds information when the field took more than one value;
     // a device's single-value field is already summarized by its header count.

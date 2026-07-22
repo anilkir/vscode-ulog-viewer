@@ -350,6 +350,7 @@ body.resizing-column {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  gap: 1px;
   padding: 1px 4px 1px 0;
 }
 
@@ -359,6 +360,33 @@ body.resizing-column {
   text-overflow: ellipsis;
   white-space: nowrap;
   user-select: text;
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+/* Zebra-stripe multi-value lists so stacked entries — e.g. the many distinct
+   processes that occupied top_cpu_processes[0] over the flight — are easy to
+   tell apart from one another. Single-value fields have no even row, so they
+   stay unstriped. */
+.string-field-values > .string-field-value:nth-child(even) {
+  background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+}
+
+/* Click a truncated value to reveal the full text, wrapped over as many lines
+   as it needs; click again to collapse back to one line. */
+.string-field-value.string-clickable {
+  cursor: pointer;
+}
+
+.string-field-value.string-clickable:hover {
+  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  color: var(--vscode-textLink-foreground);
+}
+
+.string-field-value.string-expanded {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .string-field-value.string-empty {
