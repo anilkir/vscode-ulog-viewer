@@ -294,6 +294,135 @@ body.resizing-column {
   margin-left: 6px;
 }
 
+/* Read-only reconstructed char[N] string fields, shown under a topic below
+   its plottable field buttons (see renderStringsInto in main.ts). */
+.string-field-list {
+  padding-left: 18px;
+  margin-top: 2px;
+}
+
+.string-divider {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.78em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  padding: 3px 4px 1px;
+  border-top: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.25)));
+  margin-top: 2px;
+}
+
+.string-note {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  padding: 1px 4px;
+}
+
+/* Two-column grid shared by both string views. The label column is sized to
+   the widest field name (fit-content), so values start right after it with no
+   wasted gap; it's capped at 55% so a pathological long name (e.g.
+   "top_cpu_processes[0].command") ellipsizes rather than crushing the value
+   column. Every ".string-field" is display:contents so its name/value land
+   directly in this grid and share the one column width across all rows. */
+.string-grid,
+.string-record {
+  display: grid;
+  grid-template-columns: fit-content(55%) 1fr;
+  column-gap: 10px;
+  row-gap: 1px;
+  align-items: baseline;
+}
+
+.string-field {
+  display: contents;
+}
+
+.string-field-name {
+  color: var(--vscode-descriptionForeground);
+  padding: 1px 0 1px 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.string-field-values {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 1px 4px 1px 0;
+}
+
+.string-field-value {
+  font-family: var(--vscode-editor-font-family, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.string-field-value.string-empty {
+  font-family: inherit;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.string-count {
+  color: var(--vscode-descriptionForeground);
+  font-family: inherit;
+  font-size: 0.85em;
+}
+
+.string-more {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 1px 0;
+  margin-top: 1px;
+  color: var(--vscode-textLink-foreground);
+  font-family: inherit;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+.string-more:hover {
+  text-decoration: underline;
+}
+
+/* One enumerated device/entry: its fields grouped under a small index +
+   publish-count header, with a faint rule on the left to bind them. */
+.string-record {
+  border-left: 2px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.25)));
+  padding-left: 6px;
+  margin: 3px 0 3px 2px;
+}
+
+.string-record-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 4px 1px;
+}
+
+.string-record-index {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 0.8em;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+/* A value reached only after an earlier one — i.e. this field changed during
+   the flight. The arrow makes the transition explicit in the stacked column. */
+.string-field-value.string-change::before {
+  content: "→ ";
+  color: var(--vscode-descriptionForeground);
+}
+
 .plot-pane {
   flex: 1;
   display: flex;

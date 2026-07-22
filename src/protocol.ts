@@ -12,6 +12,22 @@ export interface FieldInfo {
   type: string;
 }
 
+/**
+ * A `char[N]` field — a string in every sense except ULog's type system,
+ * which has no string type, so PX4 declares e.g. `name` as `char[80]` and it
+ * lands in the log as 80 single-byte channels. These carry the topic's text
+ * metadata (device names, firmware/serial strings, …); they're not scalars,
+ * so they can't be plotted — their decoded values are fetched on demand and
+ * shown read-only under the topic instead. Just the *name* and declared
+ * length live in the summary; the actual bytes come from `getStrings`.
+ */
+export interface StringFieldInfo {
+  /** Field name as declared, e.g. "name" or "firmware_version". */
+  name: string;
+  /** Declared array length N of the `char[N]`. */
+  length: number;
+}
+
 export interface TopicInfo {
   /** ULog subscription message id — unique key for data requests. */
   msgId: number;
@@ -23,6 +39,42 @@ export interface TopicInfo {
   /** Number of data messages logged for this subscription. */
   count: number;
   fields: FieldInfo[];
+  /** `char[N]` (string) fields, if any — see StringFieldInfo. Empty for the
+   *  vast majority of topics, which carry no text at all. */
+  stringFields: StringFieldInfo[];
+}
+
+/**
+ * One distinct fully-decoded sample of a topic's string fields — every
+ * `char[N]` field's value as they appeared *together* in one published
+ * message. Each timestamped sample is one coherent record (e.g. one CAN
+ * device's name+firmware+hardware+serial for device_information), so keeping
+ * a sample's fields grouped is what lets the UI show "device 3's firmware
+ * changed" rather than losing that correlation across per-field value lists.
+ */
+export interface StringRecord {
+  /** Field name -> decoded value (empty string where that sample's field was
+   *  blank). Keyed by the same names as `TopicStrings.fieldNames`. */
+  values: Record<string, string>;
+  /** How many of the topic's samples carried exactly this full record. */
+  count: number;
+}
+
+/** All of a topic's `char[N]` string-field data, as distinct whole records —
+ *  the payload of a `getStrings` reply. */
+export interface TopicStrings {
+  /** The topic's `char[N]` field names, in message-declaration order. */
+  fieldNames: string[];
+  /** Distinct full records, in first-seen (chronological) order. May be
+   *  capped — see `truncated`. */
+  records: StringRecord[];
+  /** Total samples decoded for this topic. */
+  sampleCount: number;
+  /** True if the distinct-record count hit its cap and stopped growing: then
+   *  `records` covers only the first distinct records seen, and later-only
+   *  records/values are missing. Normal device topics never hit this; a
+   *  high-cardinality text topic (per-sample-unique strings) can. */
+  truncated: boolean;
 }
 
 export interface LogMessageInfo {
@@ -176,6 +228,10 @@ export interface SavedView {
 export type WebviewToHostMessage =
   | { type: "ready" }
   | { type: "getSeries"; msgId: number; field: string }
+  /** Requests the decoded values of a topic's `char[N]` (string) fields —
+   *  sent lazily the first time such a topic is expanded in the sidebar, so
+   *  logs whose string topics are never opened pay nothing for them. */
+  | { type: "getStrings"; msgId: number }
   | { type: "saveView"; panels: SavedViewPanelSpec[] }
   /** Overwrites an existing view in place — no name prompt, unlike
    *  "saveView" — used by the "Update View" action once the currently
@@ -210,4 +266,6 @@ export type HostToWebviewMessage =
       /** Float64Array bytes: sample values (NaN where not representable). */
       values: ArrayBuffer;
     }
-  | { type: "seriesError"; msgId: number; field: string; message: string };
+  | { type: "seriesError"; msgId: number; field: string; message: string }
+  | { type: "strings"; msgId: number; data: TopicStrings }
+  | { type: "stringsError"; msgId: number; message: string };

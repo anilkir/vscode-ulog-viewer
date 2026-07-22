@@ -6,8 +6,16 @@
  * `ulog.open()`/`readMessages()` are never used at all.
  */
 import { MessageType, type FieldPrimitive, type Filelike, type MessageDefinition, type Subscription } from "@foxglove/ulog";
-import { scanTopicColumns, type UlogFileScanResult } from "./paramScan";
-import type { FieldInfo, FormatDefinitionInfo, LogSummary, MessageTypeCount, TopicInfo } from "./protocol";
+import { scanTopicColumns, scanTopicStrings, type UlogFileScanResult } from "./paramScan";
+import type {
+  FieldInfo,
+  FormatDefinitionInfo,
+  LogSummary,
+  MessageTypeCount,
+  StringFieldInfo,
+  TopicInfo,
+  TopicStrings,
+} from "./protocol";
 
 /** Columnar time-series data extracted from one topic (subscription). */
 export interface TopicColumns {
@@ -66,11 +74,37 @@ export function plottableFields(subscription: Subscription, definitions: Map<str
 }
 
 /**
+ * The `char[N]` (string) fields of a subscription — the topic's text metadata
+ * (device names, firmware/serial strings, …), which `plottableFields` above
+ * deliberately skips because a string isn't a scalar and can't be plotted.
+ * Only top-level `char[N]` fields are reported, matching `scanTopicStrings`'s
+ * own extraction scope (paramScan.ts) — keep the two in sync by hand.
+ */
+export function stringFields(subscription: Subscription): StringFieldInfo[] {
+  const fields: StringFieldInfo[] = [];
+  for (const field of subscription.fields) {
+    if (!field.name.startsWith("_") && field.type === "char" && field.arrayLength != undefined) {
+      fields.push({ name: field.name, length: field.arrayLength });
+    }
+  }
+  return fields;
+}
+
+/**
  * Extract (and cache) all plottable columns for a topic, via the fast
  * low-level scan in paramScan.ts.
  */
 export function extractTopicColumns(filelike: Filelike, scan: UlogFileScanResult, msgId: number): Promise<TopicColumns> {
   return scanTopicColumns(filelike, scan, msgId);
+}
+
+/**
+ * Reconstruct (via the fast scan in paramScan.ts) the decoded values of a
+ * topic's `char[N]` string fields — the non-plottable counterpart to
+ * `extractTopicColumns` above.
+ */
+export function extractTopicStrings(filelike: Filelike, scan: UlogFileScanResult, msgId: number): Promise<TopicStrings> {
+  return scanTopicStrings(filelike, scan, msgId);
 }
 
 /**
@@ -208,6 +242,7 @@ function buildTopics(scan: UlogFileScanResult): TopicInfo[] {
       multiId: subscription.multiId,
       count: scan.dataMessageCounts.get(msgId) ?? 0,
       fields: plottableFields(subscription, scan.definitions),
+      stringFields: stringFields(subscription),
     });
   }
   return topics.sort((a, b) => a.name.localeCompare(b.name));

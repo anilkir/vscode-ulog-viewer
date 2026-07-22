@@ -8,7 +8,9 @@ import type {
   ParameterInfo,
   SavedView,
   SavedViewPanelSpec,
+  StringRecord,
   TopicInfo,
+  TopicStrings,
   WebviewToHostMessage,
 } from "../protocol";
 
@@ -22,6 +24,21 @@ const vscode = acquireVsCodeApi();
 
 const US_PER_SEC = 1e6;
 const MAX_SERIES_PER_PANEL = 8;
+/** How many string records/values to show before collapsing the remainder
+ *  behind a click-to-reveal "+N more" (see the string-field rendering). */
+const MAX_SHOWN_STRING_VALUES = 8;
+/** Above this many distinct records — with no device-identity field to group
+ *  them — a topic is treated as free-form text (not a device enumeration) and
+ *  falls back to the compact per-field value view. */
+const MAX_RECORD_VIEW = 24;
+/** Identity fields, tried in order: a topic with one of these is a device
+ *  enumeration, so records are grouped by it and a single field changing
+ *  across a device's publications shows as a transition rather than a new
+ *  device. `device_id` (device_information's unique hardware id — a packed
+ *  bus/address/type bitfield) and `id` are numeric siblings the scan pulls
+ *  in alongside the char fields; the serials are the char-field fallback.
+ *  Matched case-insensitively against the record's field names. */
+const IDENTITY_FIELD_NAMES = ["device_id", "id", "serial_number", "serial"];
 const SERIES_COLOR_VARS = [
   "--ulog-series-1",
   "--ulog-series-2",
@@ -182,6 +199,11 @@ interface AppState {
   focusedPanelId: number | undefined;
   /** `${panelId}:${msgId}:${field}` requests in flight. */
   pending: Set<string>;
+  /** Decoded `char[N]` string-field data, keyed by msgId — populated lazily
+   *  the first time a string-bearing topic is expanded. */
+  stringsCache: Map<number, TopicStrings>;
+  /** msgIds whose string values have been requested and not yet returned. */
+  pendingStrings: Set<number>;
   expandedTopics: Set<number>;
   topicFilter: string;
   parameterFilter: string;
@@ -218,6 +240,8 @@ const state: AppState = {
   nextMarkerId: 1,
   savedViews: [],
   pending: new Set(),
+  stringsCache: new Map(),
+  pendingStrings: new Set(),
   expandedTopics: new Set(),
   topicFilter: "",
   parameterFilter: "",
@@ -2012,6 +2036,258 @@ function refreshFieldButtons(): void {
 /* Topic sidebar                                                           */
 /* ---------------------------------------------------------------------- */
 
+/** String fields of a topic that pass the current sidebar filter — the same
+ *  name-based rule used for plottable fields (values aren't loaded until a
+ *  topic is expanded, so they can't participate in the filter). */
+function matchingStringFieldNames(topic: TopicInfo): string[] {
+  const filter = state.topicFilter.trim();
+  if (filter === "" || matchesSearchTerms(topic.name, filter)) {
+    return topic.stringFields.map((f) => f.name);
+  }
+  return topic.stringFields.filter((f) => matchesSearchTerms(f.name, filter)).map((f) => f.name);
+}
+
+/** Requests a topic's string-field values once, the first time it's needed. */
+function ensureStringsFetched(msgId: number): void {
+  if (state.stringsCache.has(msgId) || state.pendingStrings.has(msgId)) {
+    return;
+  }
+  state.pendingStrings.add(msgId);
+  vscode.postMessage({ type: "getStrings", msgId });
+  populateStringsSection(msgId);
+}
+
+/** One distinct value a field took, with how many samples carried it. */
+interface FieldValueCount {
+  value: string;
+  count: number;
+}
+
+/** One grouped device/entry: the samples sharing an identity, and each
+ *  field's distinct values (first-seen order) across that device's samples —
+ *  so a field with >1 value here is one that changed over the flight. */
+interface DeviceEntry {
+  /** Total publications across this device's records. */
+  count: number;
+  /** Field name -> distinct values (first-seen order), one per string field. */
+  fields: Map<string, FieldValueCount[]>;
+}
+
+/** The topic's device-identity fields (e.g. device_id + serial_number), in
+ *  field order — records get grouped by the *combination* of their values.
+ *  A composite is essential because no single field is reliably unique: a
+ *  DroneCAN `device_id` collides (0/1/2 reused across ESCs, GPS, ADS-B),
+ *  while a multi-sensor module shares one serial across differing device_ids.
+ *  Together they pin down one logical device, so only a genuine same-device
+ *  change (identity fixed, another field differs) merges into a transition. */
+function identityFields(fieldNames: string[]): string[] {
+  return fieldNames.filter((name) => IDENTITY_FIELD_NAMES.includes(name.toLowerCase()));
+}
+
+/** Distinct values of one field across a set of records, in first-seen order,
+ *  each with the total number of samples that carried it. */
+function distinctFieldValues(records: StringRecord[], fieldName: string): FieldValueCount[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const value = record.values[fieldName] ?? "";
+    counts.set(value, (counts.get(value) ?? 0) + record.count);
+  }
+  return [...counts.entries()].map(([value, count]) => ({ value, count }));
+}
+
+/** Groups a topic's distinct records into devices by the combined value of
+ *  its identity fields (so the same device's records merge and a changed
+ *  field stays within it), or one device per record when there's no
+ *  identity to group on. Ordered by publication count, most-published first. */
+function buildDevices(data: TopicStrings, idFields: string[]): DeviceEntry[] {
+  const groups = new Map<string, StringRecord[]>();
+  data.records.forEach((record, index) => {
+    // Merge on identity only when at least one identity part is non-empty;
+    // an all-blank identity can't safely merge, so key per-record instead.
+    const hasIdentity = idFields.some((f) => (record.values[f] ?? "") !== "");
+    const key = hasIdentity ? `id\u0000${idFields.map((f) => record.values[f] ?? "").join("\u0000")}` : `rec\u0000${index}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(record);
+    } else {
+      groups.set(key, [record]);
+    }
+  });
+
+  const devices: DeviceEntry[] = [];
+  for (const records of groups.values()) {
+    const fields = new Map<string, FieldValueCount[]>();
+    for (const name of data.fieldNames) {
+      fields.set(name, distinctFieldValues(records, name));
+    }
+    devices.push({ count: records.reduce((sum, r) => sum + r.count, 0), fields });
+  }
+  devices.sort((a, b) => b.count - a.count);
+  return devices;
+}
+
+/** Appends a field's value(s) into a value column. `asTransition` marks
+ *  every value after the first as a change-over-time (rendered with a "→"),
+ *  vs. an unordered set of distinct values in the aggregate fallback view. */
+function appendFieldValues(wrap: HTMLElement, vals: FieldValueCount[], asTransition: boolean): void {
+  if (vals.length === 0) {
+    wrap.appendChild(el("span", "string-field-value string-empty", "(empty)"));
+    return;
+  }
+  const multiple = vals.length > 1;
+  const appendOne = ({ value, count }: FieldValueCount, isChange: boolean) => {
+    const empty = value === "";
+    const cls =
+      "string-field-value" + (isChange ? " string-change" : "") + (empty ? " string-empty" : "");
+    const v = el("span", cls, empty ? "(empty)" : value);
+    if (!empty) {
+      v.title = value;
+    }
+    // A count only adds information when the field took more than one value;
+    // a device's single-value field is already summarized by its header count.
+    if (multiple) {
+      v.appendChild(el("span", "string-count", ` ×${count}`));
+    }
+    wrap.appendChild(v);
+  };
+  vals.slice(0, MAX_SHOWN_STRING_VALUES).forEach((entry, i) => appendOne(entry, asTransition && i > 0));
+  const hidden = vals.slice(MAX_SHOWN_STRING_VALUES);
+  if (hidden.length > 0) {
+    const more = el("button", "string-more", `+${hidden.length} more`);
+    more.addEventListener("click", () => {
+      more.remove();
+      hidden.forEach((entry) => appendOne(entry, asTransition));
+    });
+    wrap.appendChild(more);
+  }
+}
+
+/** A "field-name  value(s)" row. */
+function makeStringFieldRow(name: string, vals: FieldValueCount[], asTransition: boolean): HTMLElement {
+  const row = el("div", "string-field");
+  const nameEl = el("span", "string-field-name", name);
+  nameEl.title = name;
+  row.appendChild(nameEl);
+  const wrap = el("div", "string-field-values");
+  appendFieldValues(wrap, vals, asTransition);
+  row.appendChild(wrap);
+  return row;
+}
+
+/** Device-grouped view: one block per enumerated device/entry, each listing
+ *  its fields; a field that changed across the device's publications shows
+ *  its values as a transition. */
+function renderRecordView(section: HTMLElement, data: TopicStrings, idFields: string[], shown: Set<string>): void {
+  const devices = buildDevices(data, idFields);
+  const renderDevice = (device: DeviceEntry, index: number, before?: HTMLElement) => {
+    const block = el("div", "string-record");
+    const header = el("div", "string-record-header");
+    header.appendChild(el("span", "string-record-index", String(index + 1)));
+    header.appendChild(el("span", "string-count", `(×${device.count})`));
+    block.appendChild(header);
+    for (const name of data.fieldNames) {
+      if (shown.has(name)) {
+        block.appendChild(makeStringFieldRow(name, device.fields.get(name) ?? [], true));
+      }
+    }
+    if (before) {
+      section.insertBefore(block, before);
+    } else {
+      section.appendChild(block);
+    }
+  };
+
+  devices.slice(0, MAX_SHOWN_STRING_VALUES).forEach((device, i) => renderDevice(device, i));
+  const hidden = devices.slice(MAX_SHOWN_STRING_VALUES);
+  if (hidden.length > 0) {
+    const more = el("button", "string-more", `+${hidden.length} more device${hidden.length > 1 ? "s" : ""}`);
+    more.addEventListener("click", () => {
+      hidden.forEach((device, i) => renderDevice(device, MAX_SHOWN_STRING_VALUES + i, more));
+      more.remove();
+    });
+    section.appendChild(more);
+  }
+}
+
+/** Aggregate fallback view: each field's distinct values across all samples,
+ *  most-frequent first — for free-form/high-cardinality text topics that
+ *  aren't a device enumeration. */
+function renderPerFieldView(section: HTMLElement, data: TopicStrings, shown: Set<string>): void {
+  const grid = el("div", "string-grid");
+  for (const name of data.fieldNames) {
+    if (!shown.has(name)) {
+      continue;
+    }
+    const vals = distinctFieldValues(data.records, name)
+      .filter((v) => v.value.length > 0)
+      .sort((a, b) => b.count - a.count);
+    grid.appendChild(makeStringFieldRow(name, vals, false));
+  }
+  section.appendChild(grid);
+}
+
+/** (Re)renders the read-only string-field rows into a topic's strings
+ *  subsection — from the cache if loaded, a "Reading…" placeholder while a
+ *  fetch is in flight, or an error note if it failed. */
+function renderStringsInto(section: HTMLElement, topic: TopicInfo, errorMessage?: string): void {
+  section.textContent = "";
+  const names = matchingStringFieldNames(topic);
+  if (names.length === 0) {
+    return;
+  }
+  section.appendChild(el("div", "string-divider", "strings"));
+
+  if (errorMessage) {
+    section.appendChild(el("div", "string-note", `Couldn't read values: ${errorMessage}`));
+    return;
+  }
+  const data = state.stringsCache.get(topic.msgId);
+  if (!data) {
+    section.appendChild(el("div", "string-note", state.pendingStrings.has(topic.msgId) ? "Reading…" : "…"));
+    return;
+  }
+
+  // Which field rows to show, from the fetched field set (which includes the
+  // numeric device_id/device_type siblings, not just the char fields the
+  // sidebar filter knows about) — filtered by the same name search.
+  const filter = state.topicFilter.trim();
+  const shown = new Set(
+    filter === "" || matchesSearchTerms(topic.name, filter)
+      ? data.fieldNames
+      : data.fieldNames.filter((n) => matchesSearchTerms(n, filter)),
+  );
+  const idFields = identityFields(data.fieldNames);
+  // Device view when the topic looks like an enumeration: it either has an
+  // identity field, or few enough distinct records to be one device apiece.
+  // A single-field or high-cardinality text topic isn't, so fall back.
+  const useRecordView = data.fieldNames.length >= 2 && (idFields.length > 0 || data.records.length <= MAX_RECORD_VIEW);
+  if (useRecordView) {
+    renderRecordView(section, data, idFields, shown);
+  } else {
+    renderPerFieldView(section, data, shown);
+  }
+
+  if (data.truncated) {
+    section.appendChild(
+      el(
+        "div",
+        "string-note",
+        `Showing first ${data.records.length} distinct records of ${data.sampleCount.toLocaleString()} samples.`,
+      ),
+    );
+  }
+}
+
+/** Finds a live strings subsection by msgId and re-renders it — used when an
+ *  async `strings`/`stringsError` reply lands after the list was built. */
+function populateStringsSection(msgId: number, errorMessage?: string): void {
+  const section = topicListEl.querySelector<HTMLElement>(`.string-field-list[data-strings-msgid="${msgId}"]`);
+  const topic = state.summary?.topics.find((t) => t.msgId === msgId);
+  if (section && topic) {
+    renderStringsInto(section, topic, errorMessage);
+  }
+}
+
 function renderTopicList(): void {
   const summary = state.summary;
   if (!summary) {
@@ -2026,7 +2302,8 @@ function renderTopicList(): void {
       filter === "" || topicMatches
         ? topic.fields
         : topic.fields.filter((f) => matchesSearchTerms(f.name, filter));
-    if (filter !== "" && !topicMatches && matchingFields.length === 0) {
+    const matchingStrings = matchingStringFieldNames(topic);
+    if (filter !== "" && !topicMatches && matchingFields.length === 0 && matchingStrings.length === 0) {
       continue;
     }
 
@@ -2044,6 +2321,9 @@ function renderTopicList(): void {
           state.expandedTopics.delete(topic.msgId);
         }
       }
+      if (details.open && topic.stringFields.length > 0) {
+        ensureStringsFetched(topic.msgId);
+      }
     });
 
     const fieldList = el("div", "field-list");
@@ -2056,11 +2336,26 @@ function renderTopicList(): void {
       button.addEventListener("click", () => toggleField(topic, field.name));
       fieldList.appendChild(button);
     }
-    if (matchingFields.length === 0) {
+    if (matchingFields.length === 0 && matchingStrings.length === 0) {
       fieldList.appendChild(el("div", "field-type", "no plottable fields"));
     }
     details.appendChild(fieldList);
+
+    let stringsSection: HTMLElement | undefined;
+    if (matchingStrings.length > 0) {
+      stringsSection = el("div", "string-field-list");
+      stringsSection.dataset.stringsMsgid = String(topic.msgId);
+      details.appendChild(stringsSection);
+    }
+
     topicListEl.appendChild(details);
+
+    if (stringsSection) {
+      renderStringsInto(stringsSection, topic);
+      if (details.open) {
+        ensureStringsFetched(topic.msgId);
+      }
+    }
   }
   refreshFieldButtons();
 }
@@ -4623,6 +4918,20 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
       }
       setPlotStatus(`Failed to load ${message.field}: ${message.message}`);
       refreshFieldButtons();
+      break;
+    }
+    case "strings": {
+      state.pendingStrings.delete(message.msgId);
+      state.stringsCache.set(message.msgId, message.data);
+      populateStringsSection(message.msgId);
+      break;
+    }
+    case "stringsError": {
+      // Not cached: leaving it unfetched lets a later re-expand retry (a read
+      // failure is usually transient), and avoids a cached empty result
+      // later rendering every field as a misleading "(empty)".
+      state.pendingStrings.delete(message.msgId);
+      populateStringsSection(message.msgId, message.message);
       break;
     }
   }

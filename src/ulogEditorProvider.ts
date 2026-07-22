@@ -1,10 +1,16 @@
 import * as vscode from "vscode";
 import type { Filelike } from "@foxglove/ulog";
 import { FileReader } from "@foxglove/ulog/node";
-import { buildSummary, extractTopicColumns, type TopicColumns } from "./ulogData";
+import { buildSummary, extractTopicColumns, extractTopicStrings, type TopicColumns } from "./ulogData";
 import { scanUlogFile, type UlogFileScanResult } from "./paramScan";
 import { log, logTimed } from "./logger";
-import type { HostToWebviewMessage, SavedView, SavedViewPanelSpec, WebviewToHostMessage } from "./protocol";
+import type {
+  HostToWebviewMessage,
+  SavedView,
+  SavedViewPanelSpec,
+  TopicStrings,
+  WebviewToHostMessage,
+} from "./protocol";
 
 const SAVED_VIEWS_KEY = "ulogViewer.savedViews";
 
@@ -194,6 +200,7 @@ export class UlogDocument implements vscode.CustomDocument {
   }
 
   private readonly topicCache = new Map<number, Promise<TopicColumns>>();
+  private readonly stringCache = new Map<number, Promise<TopicStrings>>();
   private scanPromise: Promise<UlogFileScanResult> | undefined;
 
   private constructor(
@@ -235,8 +242,20 @@ export class UlogDocument implements vscode.CustomDocument {
     return cached;
   }
 
+  /** Reconstruct (and cache) a topic's `char[N]` string fields' values. */
+  getTopicStrings(msgId: number): Promise<TopicStrings> {
+    let cached = this.stringCache.get(msgId);
+    if (!cached) {
+      cached = this.scan().then((scan) => extractTopicStrings(this.instrumented, scan, msgId));
+      cached.catch(() => this.stringCache.delete(msgId));
+      this.stringCache.set(msgId, cached);
+    }
+    return cached;
+  }
+
   dispose(): void {
     this.topicCache.clear();
+    this.stringCache.clear();
     void this.rawReader.close().catch(() => undefined);
   }
 }
@@ -364,6 +383,23 @@ export class UlogEditorProvider implements vscode.CustomReadonlyEditorProvider<U
           } catch (err) {
             log(`getSeries msgId=${msgId} field="${field}" FAILED after ${Date.now() - t0}ms: ${errorMessage(err)}`);
             post({ type: "seriesError", msgId, field, message: errorMessage(err) });
+          }
+          break;
+        }
+        case "getStrings": {
+          const { msgId } = message;
+          const t0 = Date.now();
+          try {
+            const data = await document.getTopicStrings(msgId);
+            log(
+              `getStrings msgId=${msgId}: ${Date.now() - t0}ms ` +
+                `(${data.fieldNames.length} field(s), ${data.records.length} record(s))`,
+            );
+            document.logReadStats(`  reads for strings msgId=${msgId}`);
+            post({ type: "strings", msgId, data });
+          } catch (err) {
+            log(`getStrings msgId=${msgId} FAILED after ${Date.now() - t0}ms: ${errorMessage(err)}`);
+            post({ type: "stringsError", msgId, message: errorMessage(err) });
           }
           break;
         }

@@ -46,7 +46,7 @@ import {
   type MessageDefinition,
   type Subscription,
 } from "@foxglove/ulog";
-import type { LogMessageInfo } from "./protocol";
+import type { LogMessageInfo, StringRecord, TopicStrings } from "./protocol";
 
 const US_PER_SEC = 1e6;
 const PROLOGUE_BYTES = 16; // 7-byte magic + 1-byte version + 8-byte file timestamp
@@ -832,4 +832,162 @@ export async function scanTopicColumns(
     trimmed.set(name, column.slice(0, n));
   }
   return { times: times.slice(0, n), columns: trimmed };
+}
+
+/** A single field to reconstruct into a record, with the byte offset it
+ *  decodes from within each Data message. `isString` fields are the `char[N]`
+ *  strings; the rest are the numeric identity/type siblings below, formatted
+ *  as decimal text so they can share the same record. */
+interface StringFieldTask {
+  name: string;
+  field: Subscription["fields"][number];
+  byteOffset: number;
+  isString: boolean;
+}
+
+/** Cap on distinct whole records tracked, so a pathological topic that writes
+ *  a unique string tuple every message can't grow an unbounded Map. A real
+ *  device topic enumerates at most a few dozen distinct records; 128 is far
+ *  past that while still bounding a per-sample-unique text topic. */
+const MAX_DISTINCT_RECORDS = 128;
+
+/** Numeric scalar siblings pulled into a string topic's records alongside its
+ *  char fields — the identity/type metadata that names each device. Notably
+ *  device_information's `device_id` (a packed bus/address/type bitfield that
+ *  uniquely identifies a device) and `device_type`; `id` covers battery_info
+ *  / cellular_status. These are stable per device, so including them never
+ *  fragments records — measurement scalars (voltages, positions, …) are
+ *  deliberately excluded, since those would make every sample a unique
+ *  record. Matched case-insensitively. */
+const ASSOCIATED_SCALAR_FIELDS = new Set(["device_id", "device_type", "id"]);
+
+/** Formats a decoded scalar field value as the text stored in a record. */
+function formatScalar(value: FieldPrimitive): string {
+  return typeof value === "boolean" ? (value ? "true" : "false") : String(value);
+}
+
+/**
+ * Turn a raw `char[N]` decode into the string it actually represents: cut at
+ * the first NUL terminator (C-string convention — PX4 zero-fills the unused
+ * tail) and drop any trailing whitespace/control bytes. Interior printable
+ * content is left exactly as-is.
+ */
+function trimCString(raw: string): string {
+  const nul = raw.indexOf("\u0000");
+  const body = nul === -1 ? raw : raw.slice(0, nul);
+  // Trailing whitespace and control/DEL bytes are fixed-width-buffer padding,
+  // never meaningful content — e.g. a space-padded ADS-B callsign "SWA3060 ".
+  // eslint-disable-next-line no-control-regex
+  return body.replace(/[\s\u0000-\u001f\u007f]+$/, "");
+}
+
+/**
+ * Reconstructs a topic's `char[N]` string fields — the text metadata (device
+ * names, firmware/serial strings, …) that `scanTopicColumns` deliberately
+ * skips because it isn't plottable. Same fast, targeted single-pass shape as
+ * `scanTopicColumns` (jumps straight to `scan.dataSectionStart`, stops once
+ * this topic's full message count is decoded), so a topic logged once at
+ * boot — as device_information is — is found and returned almost immediately
+ * rather than reading to end-of-file.
+ *
+ * Only top-level `char[N]` fields are reconstructed: that's where every real
+ * PX4 string lives, and it keeps the byte-offset bookkeeping simple. Each
+ * Data message becomes one whole record (all string fields decoded together),
+ * and identical records are collapsed with a count — so the caller can show
+ * each distinct device/entry once rather than N times, and can still see a
+ * single field changing across a device's publications because the other
+ * fields stay pinned to it within the record.
+ */
+export async function scanTopicStrings(
+  filelike: Filelike,
+  scan: Pick<UlogFileScanResult, "subscriptions" | "definitions" | "dataMessageCounts" | "dataSectionStart" | "dataSectionEnd">,
+  msgId: number,
+): Promise<TopicStrings> {
+  const subscription = scan.subscriptions.get(msgId);
+  if (!subscription) {
+    throw new Error(`Unknown topic id ${msgId}`);
+  }
+
+  const tasks: StringFieldTask[] = [];
+  let curOffset = 0;
+  let charFieldCount = 0;
+  for (const field of subscription.fields) {
+    const size = fieldSize(field, scan.definitions);
+    if (!field.name.startsWith("_")) {
+      if (field.type === "char" && field.arrayLength != undefined) {
+        tasks.push({ name: field.name, field, byteOffset: curOffset, isString: true });
+        charFieldCount++;
+      } else if (field.arrayLength == undefined && !field.isComplex && ASSOCIATED_SCALAR_FIELDS.has(field.name.toLowerCase())) {
+        tasks.push({ name: field.name, field, byteOffset: curOffset, isString: false });
+      }
+    }
+    curOffset += size * (field.arrayLength ?? 1);
+  }
+  // A topic with no char field carries no strings — even if it happened to
+  // have a device_id/id scalar, there's nothing to show, so report none.
+  if (charFieldCount === 0) {
+    return { fieldNames: [], records: [], sampleCount: 0, truncated: false };
+  }
+  const fieldNames = tasks.map((t) => t.name);
+
+  // Keyed by the record's values joined on NUL (which trimCString guarantees
+  // no value contains), so insertion order is first-seen/chronological order.
+  const recordsByKey = new Map<string, StringRecord>();
+  let sampleCount = 0;
+  let truncated = false;
+
+  const capacity = scan.dataMessageCounts.get(msgId) ?? 0;
+  let n = 0;
+  if (capacity > 0) {
+    await filelike.open();
+    const fileSize = filelike.size();
+    const reader = new FastReader(filelike, fileSize, scan.dataSectionStart);
+    const dataEnd = Math.min(scan.dataSectionEnd, fileSize);
+
+    while (dataEnd - reader.position() >= 3 && n < capacity) {
+      if (!reader.hasAvailable(3)) {
+        await reader.ensure(3);
+      }
+      const size = reader.u16();
+      const type = reader.u8();
+      const bodyStart = reader.position();
+      const bodyEnd = bodyStart + size;
+      if (bodyEnd > dataEnd) {
+        break;
+      }
+      if (type === MessageType.Data) {
+        if (!reader.hasAvailable(size)) {
+          await reader.ensure(size);
+        }
+        const candidateMsgId = reader.u16();
+        if (candidateMsgId === msgId) {
+          const payloadStart = bodyStart + 2;
+          const view = reader.rawView();
+          const base = payloadStart - reader.bufferStart();
+          const values: Record<string, string> = {};
+          const keyParts: string[] = [];
+          for (const task of tasks) {
+            const raw = parseBasicFieldValue(task.field, view, base + task.byteOffset);
+            const value = task.isString ? trimCString(raw as string) : formatScalar(raw);
+            values[task.name] = value;
+            keyParts.push(value);
+          }
+          const key = keyParts.join("\u0000");
+          const existing = recordsByKey.get(key);
+          if (existing) {
+            existing.count++;
+          } else if (recordsByKey.size < MAX_DISTINCT_RECORDS) {
+            recordsByKey.set(key, { values, count: 1 });
+          } else {
+            truncated = true;
+          }
+          sampleCount++;
+          n++;
+        }
+      }
+      reader.seekTo(bodyEnd);
+    }
+  }
+
+  return { fieldNames, records: [...recordsByKey.values()], sampleCount, truncated };
 }
