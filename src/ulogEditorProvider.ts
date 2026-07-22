@@ -382,7 +382,7 @@ export class UlogEditorProvider implements vscode.CustomReadonlyEditorProvider<U
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:;">
+        content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data: https://tile.openstreetmap.org;">
   <link rel="stylesheet" href="${distUri("webview.css")}">
   <title>ULog Viewer</title>
 </head>

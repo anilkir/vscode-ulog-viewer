@@ -500,6 +500,200 @@ body.resizing-column {
   padding: 3em;
 }
 
+/* ---- Replay tab (2D top-down flight path) ------------------------------ */
+
+.replay-toolbar {
+  padding-bottom: 8px;
+}
+
+.replay-slider {
+  flex: 1;
+  max-width: 500px;
+  accent-color: var(--vscode-button-background);
+}
+
+.replay-time-label {
+  min-width: 5em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+}
+
+.replay-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.replay-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Required by OSM's tile usage policy — kept subtle but always legible over
+ * whatever's under the bottom-right corner of the map. */
+.map-attribution {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+  font-size: 0.75em;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
+  padding: 1px 5px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Live telemetry HUD — top-left so it never collides with the attribution
+ * in the opposite corner. Vehicle state (armed/landed/mode) and telemetry
+ * readings (altitude/airspeed) are different kinds of thing, so they get
+ * their own separate boxes, stacked in this one positioned wrapper — each
+ * box (and the wrapper itself) only exists if this log has data for it. */
+.replay-hud-left {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  display: flex;
+  flex-direction: column;
+  /* Otherwise a column flex container stretches every child to the widest
+   * one's width by default — each box should size to its own content
+   * instead (a short "ARMED · IN AIR" row shouldn't widen to match a
+   * longer altitude grid, or vice versa). */
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.replay-status,
+.replay-telemetry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: color-mix(in srgb, var(--vscode-editor-background) 70%, transparent);
+  padding: 3px 6px;
+  border-radius: 3px;
+}
+
+.replay-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* label/value pairs, one row per altitude source this log actually has —
+ * a small aligned grid reads much better than one long joined string. */
+.replay-alt-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 8px;
+  row-gap: 1px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.replay-alt-key {
+  color: var(--vscode-descriptionForeground);
+}
+
+.replay-alt-val {
+  color: var(--vscode-foreground);
+  text-align: right;
+}
+
+/* Airspeed gets a visibly bigger/bolder number than the rest of the HUD —
+ * the one reading here that's often safety-relevant. */
+.replay-airspeed-row {
+  margin-top: 2px;
+}
+
+.replay-airspeed-key {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.replay-airspeed-value {
+  font-size: 1.3em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-foreground);
+  line-height: 1;
+}
+
+.replay-airspeed-unit {
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* Sleek/minimal compass — opposite corner from the status HUD. */
+.replay-compass {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 30%, transparent);
+  background: color-mix(in srgb, var(--vscode-editor-background) 55%, transparent);
+  pointer-events: none;
+}
+
+.replay-compass-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 0.68em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.replay-compass-label.n {
+  top: 12%;
+  left: 50%;
+  color: var(--vscode-foreground);
+  font-weight: 700;
+}
+
+.replay-compass-label.e {
+  top: 50%;
+  left: 88%;
+}
+
+.replay-compass-label.s {
+  top: 88%;
+  left: 50%;
+}
+
+.replay-compass-label.w {
+  top: 50%;
+  left: 12%;
+}
+
+.replay-compass-needle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 36%;
+  background: var(--ulog-series-8);
+  border-radius: 1px;
+  transform-origin: bottom center;
+  transform: translate(-50%, -100%) rotate(0deg);
+}
+
+/* Neutral (badge default) until actually armed/in-air — red for armed
+ * since that's the state worth a second look, matching the level-err
+ * badge's own color rather than inventing a new one. */
+.badge.replay-armed-badge.armed {
+  background: var(--ulog-status-critical);
+  color: #ffffff;
+}
+
+.badge.replay-landed-badge.in-air {
+  background: color-mix(in srgb, var(--ulog-series-1) 30%, var(--vscode-badge-background));
+  color: var(--vscode-foreground);
+}
+
 .plot-panel {
   flex: none;
   height: 260px;
@@ -757,7 +951,8 @@ body.resizing-panel-height {
 }
 
 .timezone-select,
-.saved-view-select {
+.saved-view-select,
+.replay-speed-select {
   max-width: 220px;
   background: var(--vscode-dropdown-background);
   color: var(--vscode-dropdown-foreground);

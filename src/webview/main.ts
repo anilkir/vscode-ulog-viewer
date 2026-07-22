@@ -493,6 +493,29 @@ function seriesKey(msgId: number, field: string): string {
   return `${msgId}:${field}`;
 }
 
+/** Resolvers for in-flight fetchSeriesAdHoc() calls, keyed the same way as
+ *  plot panels' own pending requests — checked alongside (not instead of)
+ *  the normal addSeries()/seriesError plot-panel handling in the "series"/
+ *  "seriesError" message cases below. */
+const adHocSeriesResolvers = new Map<
+  string,
+  { resolve: (data: { times: Float64Array; values: Float64Array }) => void; reject: (message: string) => void }
+>();
+
+/** Fetches one topic/field's full time series outside the normal plot-panel
+ *  flow — e.g. the Replay tab, which needs a handful of specific fields
+ *  up front rather than whatever the user happens to toggle on in a panel.
+ *  A thin promise wrapper around the same getSeries/series/seriesError
+ *  messages plot panels already use, so no protocol or host-side changes
+ *  are needed. */
+function fetchSeriesAdHoc(msgId: number, field: string): Promise<{ times: Float64Array; values: Float64Array }> {
+  const key = seriesKey(msgId, field);
+  return new Promise((resolve, reject) => {
+    adHocSeriesResolvers.set(key, { resolve, reject });
+    vscode.postMessage({ type: "getSeries", msgId, field });
+  });
+}
+
 /** Returns `times` unchanged, or a shifted copy when the "start at 0" view option is on. */
 function offsetTimes(times: Float64Array, offsetSec: number): Float64Array {
   if (offsetSec === 0) {
@@ -2356,6 +2379,1195 @@ function setupSidebarResizer(resizer: HTMLElement, sidebar: HTMLElement): void {
   });
 }
 
+/* ---------------------------------------------------------------------- */
+/* Replay tab (2D top-down flight path, from vehicle_local_position)      */
+/* ---------------------------------------------------------------------- */
+
+/** Local (x, y) bounding box, or undefined if there's no finite data at all. */
+function computeBoundingBox(
+  xs: Float64Array,
+  ys: Float64Array,
+): { minX: number; maxX: number; minY: number; maxY: number } | undefined {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i]!;
+    const y = ys[i]!;
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return Number.isFinite(minX) && Number.isFinite(minY) ? { minX, maxX, minY, maxY } : undefined;
+}
+
+/** North maps to "up" and East to "right" on screen — the usual map/nav
+ *  convention — fit uniformly (same scale on both axes, so the path isn't
+ *  stretched) into the canvas with some padding, centered on the data's
+ *  own bounding box. Returns undefined if there's no finite x/y data at
+ *  all to fit a transform to. */
+function computeReplayTransform(
+  xs: Float64Array,
+  ys: Float64Array,
+  canvasW: number,
+  canvasH: number,
+  padding: number,
+): { toScreen: (x: number, y: number) => [number, number]; scale: number } | undefined {
+  const bbox = computeBoundingBox(xs, ys);
+  if (!bbox) {
+    return undefined;
+  }
+  const { minX, maxX, minY, maxY } = bbox;
+  // North (x) spans the canvas's vertical extent, East (y) the horizontal.
+  const dataSpanNorth = Math.max(1e-6, maxX - minX);
+  const dataSpanEast = Math.max(1e-6, maxY - minY);
+  const availW = Math.max(1, canvasW - padding * 2);
+  const availH = Math.max(1, canvasH - padding * 2);
+  const scale = Math.min(availW / dataSpanEast, availH / dataSpanNorth);
+  const centerNorth = (minX + maxX) / 2;
+  const centerEast = (minY + maxY) / 2;
+  const toScreen = (x: number, y: number): [number, number] => [
+    canvasW / 2 + (y - centerEast) * scale,
+    canvasH / 2 - (x - centerNorth) * scale,
+  ];
+  return { toScreen, scale };
+}
+
+/** A simple forward-pointing triangle, rotated by `heading` (PX4 convention:
+ *  radians, 0 = north, increasing clockwise) — matches how canvas's own
+ *  ctx.rotate() sweeps for a positive angle when y grows downward, so no
+ *  sign flip is needed between the two conventions. */
+function drawVehicleIcon(
+  ctx: CanvasRenderingContext2D,
+  screenX: number,
+  screenY: number,
+  heading: number | undefined,
+  size: number,
+  color: string,
+): void {
+  ctx.save();
+  ctx.translate(screenX, screenY);
+  if (heading != undefined && Number.isFinite(heading)) {
+    ctx.rotate(heading);
+  }
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(size * 0.6, size * 0.7);
+  ctx.lineTo(0, size * 0.35);
+  ctx.lineTo(-size * 0.6, size * 0.7);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ---- GPS map background (OpenStreetMap raster tiles) --------------------
+ * Only drawn when the log's GPS is both present and trustworthy (at least
+ * one sensor_gps/vehicle_gps_position sample with fix_type >= 3, a 3D fix
+ * or better — the same bar this extension already uses for GPS-derived UTC
+ * time, see paramScan.ts) *and* vehicle_local_position carries a usable
+ * global reference (ref_lat/ref_lon plus xy_global) to anchor a flat-earth
+ * local(x,y)->(lat,lon) approximation on — the same approximation PX4
+ * itself uses internally. Falls back to the plain local-position view
+ * otherwise; no partial/broken map state is possible. */
+
+const EARTH_RADIUS_M = 6378137; // WGS84 equatorial radius.
+const TILE_SIZE_PX = 256;
+const MIN_MAP_ZOOM = 0;
+const MAX_MAP_ZOOM = 18;
+/** OSM's tile usage policy asks heavier users to self-host or use a
+ *  commercial provider instead — fine for this extension's actual load (a
+ *  handful of tiles per flight, fetched once and cached forever), but worth
+ *  revisiting if this ever needs a dedicated/paid tile source instead. */
+const OSM_ATTRIBUTION = "© OpenStreetMap contributors";
+
+function osmTileUrl(zoom: number, tx: number, ty: number): string {
+  return `https://tile.openstreetmap.org/${zoom}/${tx}/${ty}.png`;
+}
+
+function lonToWorldPx(lonDeg: number, zoom: number): number {
+  return ((lonDeg + 180) / 360) * TILE_SIZE_PX * 2 ** zoom;
+}
+
+function latToWorldPx(latDeg: number, zoom: number): number {
+  const latRad = (latDeg * Math.PI) / 180;
+  const y = 0.5 - Math.log(Math.tan(Math.PI / 4 + latRad / 2)) / (2 * Math.PI);
+  return y * TILE_SIZE_PX * 2 ** zoom;
+}
+
+interface GpsAnchor {
+  x: number;
+  y: number;
+  lat: number;
+  lon: number;
+}
+
+/** Anchors a flat-earth approximation on one matched (x, y, lat, lon)
+ *  sample — accurate enough for a single flight's extent. */
+function makeLocalToLatLon(anchor: GpsAnchor): (x: number, y: number) => [number, number] {
+  const anchorLatRad = (anchor.lat * Math.PI) / 180;
+  const metersPerDegLat = (Math.PI / 180) * EARTH_RADIUS_M;
+  const metersPerDegLon = metersPerDegLat * Math.cos(anchorLatRad);
+  return (x: number, y: number): [number, number] => [
+    anchor.lat + (x - anchor.x) / metersPerDegLat,
+    anchor.lon + (y - anchor.y) / metersPerDegLon,
+  ];
+}
+
+/** First vehicle_local_position sample with a valid global reference —
+ *  ref_lat/ref_lon rarely (if ever) change mid-flight, so one anchor point
+ *  is enough for the whole flight. Excludes exact (0, 0) (the classic
+ *  "no fix yet" placeholder) and latitudes near Mercator's own ±85.05°
+ *  breakdown point. */
+function findGpsAnchor(
+  xs: Float64Array,
+  ys: Float64Array,
+  refLat: Float64Array,
+  refLon: Float64Array,
+  xyGlobal: Float64Array,
+): GpsAnchor | undefined {
+  for (let i = 0; i < xs.length; i++) {
+    const lat = refLat[i]!;
+    const lon = refLon[i]!;
+    if (
+      xyGlobal[i] === 1 &&
+      Number.isFinite(lat) &&
+      Number.isFinite(lon) &&
+      (lat !== 0 || lon !== 0) &&
+      Math.abs(lat) <= 85
+    ) {
+      return { x: xs[i]!, y: ys[i]!, lat, lon };
+    }
+  }
+  return undefined;
+}
+
+/** At least one sample with a 3D fix or better (PX4/MAVLink's fix_type
+ *  convention: 0 no fix .. 2 2D fix, 3 3D fix, higher for augmented fixes). */
+function gpsFixTrustworthy(fixTypes: Float64Array): boolean {
+  for (let i = 0; i < fixTypes.length; i++) {
+    if (fixTypes[i]! >= 3) {
+      return true;
+    }
+  }
+  return false;
+}
+
+interface MapTransform {
+  zoom: number;
+  centerWorldPxX: number;
+  centerWorldPxY: number;
+  worldPxToScreen: (worldPxX: number, worldPxY: number) => [number, number];
+  toScreen: (latDeg: number, lonDeg: number) => [number, number];
+}
+
+/** Picks the largest integer zoom whose lat/lon bounding box still fits the
+ *  canvas (the standard slippy-map "fit bounds" algorithm), then a
+ *  pure-translation (scale exactly 1) screen transform centered on that box
+ *  — tiles always draw at their native 256px with no per-tile scaling or
+ *  resampling. */
+function computeMapTransform(
+  minLat: number,
+  maxLat: number,
+  minLon: number,
+  maxLon: number,
+  canvasW: number,
+  canvasH: number,
+  padding: number,
+): MapTransform {
+  const availW = Math.max(1, canvasW - padding * 2);
+  const availH = Math.max(1, canvasH - padding * 2);
+  const lonSpanZ0 = Math.max(1e-9, lonToWorldPx(maxLon, 0) - lonToWorldPx(minLon, 0));
+  // Mercator y grows southward, so the smaller (northern) latitude has the
+  // larger world-px y — the span is the other way round from longitude's.
+  const latSpanZ0 = Math.max(1e-9, latToWorldPx(minLat, 0) - latToWorldPx(maxLat, 0));
+  const zoom = Math.max(
+    MIN_MAP_ZOOM,
+    Math.min(MAX_MAP_ZOOM, Math.floor(Math.min(Math.log2(availW / lonSpanZ0), Math.log2(availH / latSpanZ0)))),
+  );
+  const centerWorldPxX = lonToWorldPx((minLon + maxLon) / 2, zoom);
+  const centerWorldPxY = latToWorldPx((minLat + maxLat) / 2, zoom);
+  const worldPxToScreen = (wx: number, wy: number): [number, number] => [
+    canvasW / 2 + (wx - centerWorldPxX),
+    canvasH / 2 + (wy - centerWorldPxY),
+  ];
+  const toScreen = (latDeg: number, lonDeg: number): [number, number] =>
+    worldPxToScreen(lonToWorldPx(lonDeg, zoom), latToWorldPx(latDeg, zoom));
+  return { zoom, centerWorldPxX, centerWorldPxY, worldPxToScreen, toScreen };
+}
+
+/** Module-level (survives pane rebuilds) — a flight's bounding box only
+ *  ever needs a handful of tiles regardless of zoom (the fit-bounds
+ *  algorithm always sizes the box to ~fill the canvas), so this stays
+ *  small. Never retries a tile that failed to load. */
+const tileImageCache = new Map<string, HTMLImageElement | "error">();
+
+function getTile(zoom: number, tx: number, ty: number, onArrive: () => void): HTMLImageElement | undefined {
+  const key = `${zoom}/${tx}/${ty}`;
+  const cached = tileImageCache.get(key);
+  if (cached === "error") {
+    return undefined;
+  }
+  if (cached) {
+    return cached;
+  }
+  const img = new Image();
+  img.onload = onArrive;
+  img.onerror = () => tileImageCache.set(key, "error");
+  img.src = osmTileUrl(zoom, tx, ty);
+  tileImageCache.set(key, img);
+  return img;
+}
+
+/* ---- Playback clock ----------------------------------------------------- */
+
+const REPLAY_SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4, 8, 16];
+
+/** Largest index with times[index] <= targetTimeSec (times is ascending). */
+function findIndexAtOrBefore(times: Float64Array, targetTimeSec: number): number {
+  const last = times.length - 1;
+  if (last <= 0 || targetTimeSec <= times[0]!) {
+    return 0;
+  }
+  if (targetTimeSec >= times[last]!) {
+    return last;
+  }
+  let lo = 0;
+  let hi = last;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (times[mid]! <= targetTimeSec) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return lo;
+}
+
+/** GPS-derived series needed for the map background, all from
+ *  vehicle_local_position except fixTypes (from the GPS topic itself, at
+ *  its own sample rate/count — only ever used in aggregate, never indexed
+ *  alongside the others). Undefined (not fetched at all here) means the log
+ *  doesn't have the required fields — distinct from "has them but isn't
+ *  trustworthy", which renderReplayScene below decides. */
+interface ReplayGpsData {
+  refLat: Float64Array;
+  refLon: Float64Array;
+  xyGlobal: Float64Array;
+  fixTypes: Float64Array;
+}
+
+/** A field fetched on its own timeline, distinct from xs/ys/times — armed,
+ *  landed, mode, airspeed, and the two secondary altitude sources all come
+ *  from other topics logged at their own rates, so reading "the value as of
+ *  the currently-scrubbed instant" needs findIndexAtOrBefore against this
+ *  series' own `times`, not the replay's main one. */
+type TimeSeries = { times: Float64Array; values: Float64Array };
+
+/** Tries each message name in order, preferring multiId 0 within whichever
+ *  name is found first — the same fallback shape every individual topic
+ *  lookup in this file already used (sensor_gps/vehicle_gps_position,
+ *  etc), pulled out once now that there are enough of them to matter. */
+function findTopic(summary: LogSummary, ...messageNames: string[]): TopicInfo | undefined {
+  for (const name of messageNames) {
+    const found =
+      summary.topics.find((t) => t.messageName === name && t.multiId === 0) ??
+      summary.topics.find((t) => t.messageName === name);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+/** Optional single-field fetch for a HUD element that isn't essential to
+ *  the replay itself: undefined if the topic or field don't exist at all,
+ *  undefined (via catch) if the fetch fails — either way the caller just
+ *  omits that one element rather than breaking the whole pane. */
+function fetchOptionalSeries(topic: TopicInfo | undefined, field: string): Promise<TimeSeries | undefined> {
+  if (!topic || !topic.fields.some((f) => f.name === field)) {
+    return Promise.resolve(undefined);
+  }
+  return fetchSeriesAdHoc(topic.msgId, field).catch(() => undefined);
+}
+
+/** PX4's vehicle_status.msg NAVIGATION_STATE_* enum, current firmware as of
+ *  this writing — cross-checked against a real log's actual transitions
+ *  (POSCTL -> AUTO_TAKEOFF -> AUTO_LOITER -> AUTO_RTL -> AUTO_LOITER, a
+ *  plausible mission shape). Older/newer firmware or reserved slots fall
+ *  back to "Mode N" rather than guessing a label that might be wrong. */
+const NAV_STATE_NAMES: Record<number, string> = {
+  0: "MANUAL",
+  1: "ALTCTL",
+  2: "POSCTL",
+  3: "AUTO_MISSION",
+  4: "AUTO_LOITER",
+  5: "AUTO_RTL",
+  8: "ACRO",
+  12: "OFFBOARD",
+  13: "STAB",
+  17: "AUTO_TAKEOFF",
+  18: "AUTO_LAND",
+  19: "AUTO_FOLLOW_TARGET",
+  20: "AUTO_PRECLAND",
+  21: "ORBIT",
+  22: "AUTO_VTOL_TAKEOFF",
+};
+
+function navStateLabel(value: number): string {
+  return NAV_STATE_NAMES[value] ?? `Mode ${value}`;
+}
+
+/** Last sample where the local-frame home position was actually valid —
+ *  home_position updates rarely (often just once or twice a flight), so
+ *  the most recent valid one is simply the current answer. */
+function lastValidHome(
+  xs: Float64Array,
+  ys: Float64Array,
+  validLpos: Float64Array,
+): { x: number; y: number } | undefined {
+  for (let i = xs.length - 1; i >= 0; i--) {
+    if (validLpos[i] === 1 && Number.isFinite(xs[i]!) && Number.isFinite(ys[i]!)) {
+      return { x: xs[i]!, y: ys[i]! };
+    }
+  }
+  return undefined;
+}
+
+/** position_setpoint_triplet.current changes every time the active nav
+ *  target changes — collapsing consecutive/repeated (lat, lon) pairs into
+ *  a static list gives a reasonable approximation of "the waypoints this
+ *  flight visited" without needing a separate mission-plan source (PX4
+ *  doesn't log the full mission item list into the .ulog itself). A small
+ *  epsilon merges re-derivations of the same physical point (e.g. RTL
+ *  heading back to a home position computed with tiny float differences
+ *  from its first appearance) instead of treating them as a new waypoint. */
+interface ReplayWaypoint {
+  lat: number;
+  lon: number;
+  /** current.acceptance_radius at the moment this waypoint was current, in
+   *  meters — NOT the same thing as reading NAV_ACC_RAD's own logged value
+   *  directly (see the long comment on ReplayWaypoint's fetch site for
+   *  why). Undefined if the log doesn't have the field at all. */
+  acceptanceRadiusM: number | undefined;
+}
+
+function dedupeWaypoints(
+  lat: Float64Array,
+  lon: Float64Array,
+  valid: Float64Array,
+  acceptanceRadius: Float64Array | undefined,
+): ReplayWaypoint[] {
+  const EPS_DEG = 1e-5; // ~1m
+  const waypoints: ReplayWaypoint[] = [];
+  for (let i = 0; i < lat.length; i++) {
+    const latVal = lat[i]!;
+    const lonVal = lon[i]!;
+    if (valid[i] !== 1 || !Number.isFinite(latVal) || !Number.isFinite(lonVal)) {
+      continue;
+    }
+    const isDuplicate = waypoints.some(
+      (w) => Math.abs(w.lat - latVal) < EPS_DEG && Math.abs(w.lon - lonVal) < EPS_DEG,
+    );
+    if (!isDuplicate) {
+      const radius = acceptanceRadius?.[i];
+      waypoints.push({ lat: latVal, lon: lonVal, acceptanceRadiusM: radius != undefined && Number.isFinite(radius) && radius > 0 ? radius : undefined });
+    }
+  }
+  return waypoints;
+}
+
+/** A small always-visible marker (home, a waypoint) — distinct from
+ *  drawVehicleIcon, which is the single scrub-following "you are here"
+ *  triangle. Text is outlined (dark stroke behind a light fill) so the
+ *  label stays legible over both map tiles and the plain dark canvas. */
+function drawMarker(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  shape: "diamond" | "circle",
+  size: number,
+  color: string,
+  label?: string,
+): void {
+  ctx.beginPath();
+  if (shape === "diamond") {
+    ctx.moveTo(x, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.lineTo(x, y + size);
+    ctx.lineTo(x - size, y);
+    ctx.closePath();
+  } else {
+    ctx.arc(x, y, size, 0, Math.PI * 2);
+  }
+  ctx.fillStyle = color;
+  ctx.fill();
+  if (label) {
+    ctx.font = "11px sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+    ctx.strokeText(label, x + size + 3, y);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, x + size + 3, y);
+  }
+}
+
+/** Renders the static ground track plus a scrubbable "current position"
+ *  marker once x/y (and optionally heading) have actually arrived — kept
+ *  separate from buildReplayPane so the pane itself can return immediately
+ *  with a loading state while the fetch is still in flight. */
+interface ReplaySceneData {
+  times: Float64Array;
+  xs: Float64Array;
+  ys: Float64Array;
+  headings: Float64Array | undefined;
+  /** vehicle_local_position.z, NED down-positive — relative altitude is
+   *  its negation. */
+  altitudesDown: Float64Array | undefined;
+  /** vehicle_local_position.ref_alt — MSL altitude is refAlt - altitudesDown. */
+  refAlt: Float64Array | undefined;
+  distBottom: Float64Array | undefined;
+  distBottomValid: Float64Array | undefined;
+  armed: TimeSeries | undefined;
+  landed: TimeSeries | undefined;
+  airspeed: TimeSeries | undefined;
+  navState: TimeSeries | undefined;
+  baroAlt: TimeSeries | undefined;
+  gpsAlt: TimeSeries | undefined;
+  home: { x: number; y: number } | undefined;
+  waypoints: ReplayWaypoint[];
+  gpsData: ReplayGpsData | undefined;
+}
+
+function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
+  const {
+    times,
+    xs,
+    ys,
+    headings,
+    altitudesDown,
+    refAlt,
+    distBottom,
+    distBottomValid,
+    armed,
+    landed,
+    airspeed,
+    navState,
+    baroAlt,
+    gpsAlt,
+    home,
+    waypoints,
+    gpsData,
+  } = data;
+
+  if (times.length === 0) {
+    pane.appendChild(el("div", "centered-note", "vehicle_local_position has no data points in this log."));
+    return;
+  }
+
+  const gpsAnchor =
+    gpsData && gpsFixTrustworthy(gpsData.fixTypes)
+      ? findGpsAnchor(xs, ys, gpsData.refLat, gpsData.refLon, gpsData.xyGlobal)
+      : undefined;
+  const localToLatLon = gpsAnchor ? makeLocalToLatLon(gpsAnchor) : undefined;
+  const mapModeActive = localToLatLon != undefined;
+
+  // First sample where the vehicle is armed, mapped onto this pane's own
+  // (local-position) timeline — armed's own times/values are a different
+  // topic/rate, same zero-order-hold lookup as the HUD fields use, just
+  // run once here rather than per frame.
+  const armIndex = (() => {
+    if (!armed) {
+      return undefined;
+    }
+    for (let i = 0; i < armed.values.length; i++) {
+      if (armed.values[i] === 1) {
+        return findIndexAtOrBefore(times, armed.times[i]!);
+      }
+    }
+    return undefined;
+  })();
+
+  const toolbar = el("div", "pane-toolbar replay-toolbar");
+  const playBtn = el("button", undefined, "▶ Play") as HTMLButtonElement;
+  const stopBtn = el("button", undefined, "⏹ Stop") as HTMLButtonElement;
+  toolbar.appendChild(playBtn);
+  toolbar.appendChild(stopBtn);
+  toolbar.appendChild(el("span", undefined, "Speed:"));
+  const speedSelect = el("select", "replay-speed-select") as HTMLSelectElement;
+  for (const speed of REPLAY_SPEED_OPTIONS) {
+    const option = el("option", undefined, `${speed}x`) as HTMLOptionElement;
+    option.value = String(speed);
+    option.selected = speed === 1;
+    speedSelect.appendChild(option);
+  }
+  toolbar.appendChild(speedSelect);
+  const slider = el("input", "replay-slider") as HTMLInputElement;
+  slider.type = "range";
+  slider.min = "0";
+  slider.max = String(times.length - 1);
+  slider.step = "1";
+  slider.value = "0";
+  if (armIndex != undefined) {
+    const armTrimBtn = el("button", undefined, "Skip Pre-Arm") as HTMLButtonElement;
+    armTrimBtn.title = "Trim the slider to start at the moment the vehicle armed";
+    let armTrimmed = false;
+    armTrimBtn.addEventListener("click", () => {
+      armTrimmed = !armTrimmed;
+      armTrimBtn.classList.toggle("active", armTrimmed);
+      slider.min = armTrimmed ? String(armIndex) : "0";
+      // Only jump if the current position would otherwise be below the new
+      // min (the slider's own value can't go there anyway) — re-enabling
+      // after the user has already scrubbed past the arm point shouldn't
+      // throw away where they were.
+      if (armTrimmed && Number(slider.value) < armIndex) {
+        updateDisplay(armIndex);
+      }
+    });
+    toolbar.appendChild(armTrimBtn);
+  }
+  toolbar.appendChild(slider);
+  const timeLabel = el("span", "replay-time-label", formatTimeTick(times[0]!, 1));
+  toolbar.appendChild(timeLabel);
+  toolbar.appendChild(el("span", undefined, "scroll to zoom · drag to pan · double-click to reset"));
+  pane.appendChild(toolbar);
+
+  const canvasWrap = el("div", "replay-canvas-wrap");
+  const canvas = el("canvas", "replay-canvas") as HTMLCanvasElement;
+  canvasWrap.appendChild(canvas);
+  const attribution = el("div", "map-attribution", OSM_ATTRIBUTION);
+  attribution.style.display = mapModeActive ? "" : "none";
+  canvasWrap.appendChild(attribution);
+
+  // Small HUD-style overlay for telemetry that isn't itself a position —
+  // each row/chip only appears if this log actually has the data for it.
+  const armedChip = el("span", "badge replay-armed-badge", "DISARMED");
+  const landedChip = el("span", "badge replay-landed-badge", "ON GROUND");
+  const modeChip = el("span", "badge replay-mode-badge");
+
+  // One label/value pair per altitude source that's actually available —
+  // a small aligned grid reads much better than one long joined string,
+  // and only the value cell's text changes per frame (the label is fixed).
+  const altGrid = el("div", "replay-alt-grid");
+  const addAltRow = (label: string): HTMLElement => {
+    altGrid.appendChild(el("span", "replay-alt-key", label));
+    const valueEl = el("span", "replay-alt-val", "—");
+    altGrid.appendChild(valueEl);
+    return valueEl;
+  };
+  const relValueEl = altitudesDown ? addAltRow("Rel") : undefined;
+  const mslValueEl = altitudesDown && refAlt ? addAltRow("MSL") : undefined;
+  const gpsAltValueEl = gpsAlt ? addAltRow("GPS") : undefined;
+  const aglValueEl = distBottom && distBottomValid ? addAltRow("AGL") : undefined;
+  const baroValueEl = baroAlt ? addAltRow("Baro") : undefined;
+
+  // Airspeed gets its own larger, bolder readout rather than blending into
+  // the small print — the one number here that's often safety-relevant.
+  const airspeedValueEl = el("span", "replay-airspeed-value", "—");
+
+  // Two visually separate boxes — vehicle state (armed/landed/mode) is a
+  // different kind of thing from telemetry readings (altitude/airspeed),
+  // so they don't share one box even though both live in the same corner.
+  const hudLeft = el("div", "replay-hud-left");
+
+  const stateRow = el("div", "replay-status-row");
+  if (armed) {
+    stateRow.appendChild(armedChip);
+  }
+  if (landed) {
+    stateRow.appendChild(landedChip);
+  }
+  if (navState) {
+    stateRow.appendChild(modeChip);
+  }
+  if (stateRow.children.length > 0) {
+    const statusBox = el("div", "replay-status");
+    statusBox.appendChild(stateRow);
+    hudLeft.appendChild(statusBox);
+  }
+
+  const telemetryRows: HTMLElement[] = [];
+  if (altGrid.children.length > 0) {
+    telemetryRows.push(altGrid);
+  }
+  if (airspeed) {
+    const airspeedRow = el("div", "replay-status-row replay-airspeed-row");
+    airspeedRow.appendChild(el("span", "replay-airspeed-key", "Airspeed"));
+    airspeedRow.appendChild(airspeedValueEl);
+    airspeedRow.appendChild(el("span", "replay-airspeed-unit", "m/s"));
+    telemetryRows.push(airspeedRow);
+  }
+  if (telemetryRows.length > 0) {
+    const telemetryBox = el("div", "replay-telemetry");
+    for (const row of telemetryRows) {
+      telemetryBox.appendChild(row);
+    }
+    hudLeft.appendChild(telemetryBox);
+  }
+
+  if (hudLeft.children.length > 0) {
+    canvasWrap.appendChild(hudLeft);
+  }
+
+  // Sleek/minimal compass — opposite corner from the status HUD. Only
+  // heading is needed, so it works the same in local and map mode.
+  let compassNeedle: HTMLElement | undefined;
+  if (headings) {
+    const compass = el("div", "replay-compass");
+    compass.appendChild(el("span", "replay-compass-label n", "N"));
+    compass.appendChild(el("span", "replay-compass-label e", "E"));
+    compass.appendChild(el("span", "replay-compass-label s", "S"));
+    compass.appendChild(el("span", "replay-compass-label w", "W"));
+    compassNeedle = el("div", "replay-compass-needle");
+    compass.appendChild(compassNeedle);
+    canvasWrap.appendChild(compass);
+  }
+
+  pane.appendChild(canvasWrap);
+
+  const REPLAY_PADDING_PX = 32;
+  const VEHICLE_ICON_PX = 10;
+  const MIN_VIEW_SCALE = 0.2;
+  const MAX_VIEW_SCALE = 40;
+
+  // User pan/zoom, layered on top of the auto-fit transform below — reset
+  // only by double-click, otherwise persists across scrubbing/playback/
+  // resize redraws.
+  let viewScale = 1;
+  let viewPanX = 0;
+  let viewPanY = 0;
+
+  const draw = (index: number) => {
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = canvasWrap.clientWidth;
+    const cssHeight = canvasWrap.clientHeight;
+    if (cssWidth <= 0 || cssHeight <= 0) {
+      return;
+    }
+    canvas.width = Math.round(cssWidth * dpr);
+    canvas.height = Math.round(cssHeight * dpr);
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      return;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    // Zooms/pans around the canvas center on top of whatever the auto-fit
+    // transform below produced — a uniform (non-rotating) similarity
+    // transform, so squares (tiles) stay square after it.
+    const applyView = (bx: number, by: number): [number, number] => [
+      cssWidth / 2 + (bx - cssWidth / 2) * viewScale + viewPanX,
+      cssHeight / 2 + (by - cssHeight / 2) * viewScale + viewPanY,
+    ];
+
+    let baseToScreen: (x: number, y: number) => [number, number];
+    // Hoisted out of the branch below (rather than block-scoped to it) so
+    // waypoint markers — given directly as lat/lon, never as local x/y —
+    // can still be placed after the branch without re-deriving it.
+    let mapTransform: MapTransform | undefined;
+
+    if (localToLatLon) {
+      const bbox = computeBoundingBox(xs, ys);
+      if (!bbox) {
+        return;
+      }
+      const [latAtMinX, lonAtMinY] = localToLatLon(bbox.minX, bbox.minY);
+      const [latAtMaxX, lonAtMaxY] = localToLatLon(bbox.maxX, bbox.maxY);
+      // A local const (rather than using the hoisted `mapTransform` `let`
+      // directly): narrowing doesn't survive into the closures below for a
+      // reassignable binding, but does for a const one.
+      const mt = computeMapTransform(latAtMinX, latAtMaxX, lonAtMinY, lonAtMaxY, cssWidth, cssHeight, REPLAY_PADDING_PX);
+      mapTransform = mt;
+
+      // Visible world-px extent at the *current* view (not just the fit-
+      // bounds one) — inverting applyView so zooming out with the wheel
+      // actually fetches/draws the extra surrounding tiles it reveals,
+      // instead of leaving them blank.
+      const screenToWorldPx = (sx: number, sy: number): [number, number] => [
+        mt.centerWorldPxX + (sx - cssWidth / 2 - viewPanX) / viewScale,
+        mt.centerWorldPxY + (sy - cssHeight / 2 - viewPanY) / viewScale,
+      ];
+      const [wx0, wy0] = screenToWorldPx(0, 0);
+      const [wx1, wy1] = screenToWorldPx(cssWidth, cssHeight);
+      const maxTileIndex = 2 ** mt.zoom - 1;
+      let minTx = Math.max(0, Math.floor(Math.min(wx0, wx1) / TILE_SIZE_PX));
+      let maxTx = Math.min(maxTileIndex, Math.floor(Math.max(wx0, wx1) / TILE_SIZE_PX));
+      let minTy = Math.max(0, Math.floor(Math.min(wy0, wy1) / TILE_SIZE_PX));
+      let maxTy = Math.min(maxTileIndex, Math.floor(Math.max(wy0, wy1) / TILE_SIZE_PX));
+      // Soft cap so zooming way out can't trigger an unbounded tile-fetch
+      // storm — clamped symmetrically around the visible center.
+      const MAX_TILES_PER_AXIS = 32;
+      if (maxTx - minTx + 1 > MAX_TILES_PER_AXIS) {
+        const centerTx = Math.round((minTx + maxTx) / 2);
+        minTx = Math.max(0, centerTx - Math.floor(MAX_TILES_PER_AXIS / 2));
+        maxTx = Math.min(maxTileIndex, minTx + MAX_TILES_PER_AXIS - 1);
+      }
+      if (maxTy - minTy + 1 > MAX_TILES_PER_AXIS) {
+        const centerTy = Math.round((minTy + maxTy) / 2);
+        minTy = Math.max(0, centerTy - Math.floor(MAX_TILES_PER_AXIS / 2));
+        maxTy = Math.min(maxTileIndex, minTy + MAX_TILES_PER_AXIS - 1);
+      }
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        for (let ty = minTy; ty <= maxTy; ty++) {
+          const img = getTile(mt.zoom, tx, ty, () => draw(Number(slider.value)));
+          if (img && img.complete && img.naturalWidth > 0) {
+            // Two corners transformed independently (rather than a fixed
+            // 256px draw) so the tile scales with viewScale too.
+            const [sx1, sy1] = applyView(...mt.worldPxToScreen(tx * TILE_SIZE_PX, ty * TILE_SIZE_PX));
+            const [sx2, sy2] = applyView(...mt.worldPxToScreen((tx + 1) * TILE_SIZE_PX, (ty + 1) * TILE_SIZE_PX));
+            ctx.drawImage(img, sx1, sy1, sx2 - sx1, sy2 - sy1);
+          }
+        }
+      }
+
+      baseToScreen = (x, y) => {
+        const [lat, lon] = localToLatLon(x, y);
+        return mt.toScreen(lat, lon);
+      };
+    } else {
+      const transform = computeReplayTransform(xs, ys, cssWidth, cssHeight, REPLAY_PADDING_PX);
+      if (!transform) {
+        return;
+      }
+      baseToScreen = transform.toScreen;
+    }
+
+    const toScreen = (x: number, y: number): [number, number] => applyView(...baseToScreen(x, y));
+
+    // Flight path: the remaining (not-yet-reached) segment first in the
+    // usual accent color, then the already-traversed segment redrawn on
+    // top in a second, clearly different color, so playback progress reads
+    // at a glance.
+    const clampedIndex = Math.max(0, Math.min(xs.length - 1, index));
+    const strokePathSegment = (endIndex: number, color: string) => {
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i <= endIndex; i++) {
+        if (!Number.isFinite(xs[i]!) || !Number.isFinite(ys[i]!)) {
+          continue;
+        }
+        const [sx, sy] = toScreen(xs[i]!, ys[i]!);
+        if (!started) {
+          ctx.moveTo(sx, sy);
+          started = true;
+        } else {
+          ctx.lineTo(sx, sy);
+        }
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    };
+    strokePathSegment(xs.length - 1, resolveColor("var(--ulog-series-1)"));
+    strokePathSegment(clampedIndex, resolveColor("var(--ulog-series-6)"));
+
+    // Static markers — home, and (map mode only, since position_setpoint
+    // has no local-frame equivalent to fall back to) waypoints — drawn
+    // under the vehicle icon but over the path.
+    if (home) {
+      const [hx, hy] = toScreen(home.x, home.y);
+      drawMarker(ctx, hx, hy, "diamond", 6, resolveColor("var(--ulog-series-4)"), "Home");
+    }
+    const mt = mapTransform;
+    if (mt) {
+      const waypointColor = resolveColor("var(--ulog-series-7)");
+      waypoints.forEach((wp, i) => {
+        const [wx, wy] = applyView(...mt.toScreen(wp.lat, wp.lon));
+        if (wp.acceptanceRadiusM != undefined) {
+          // Radius in screen px derived the same way the marker's own
+          // position is (through mt.toScreen + applyView), rather than a
+          // separate meters-per-pixel formula — automatically correct
+          // under whatever zoom/pan is active right now.
+          const metersPerDegLon = (Math.PI / 180) * EARTH_RADIUS_M * Math.cos((wp.lat * Math.PI) / 180);
+          const lonOffset = wp.acceptanceRadiusM / metersPerDegLon;
+          const [ex, ey] = applyView(...mt.toScreen(wp.lat, wp.lon + lonOffset));
+          const radiusPx = Math.hypot(ex - wx, ey - wy);
+          ctx.beginPath();
+          ctx.arc(wx, wy, radiusPx, 0, Math.PI * 2);
+          ctx.strokeStyle = waypointColor;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        drawMarker(ctx, wx, wy, "circle", 5, waypointColor, String(i + 1));
+      });
+    }
+
+    // Current position — a third, even more distinct color so it doesn't
+    // blend into the traversed trail right behind it.
+    if (Number.isFinite(xs[clampedIndex]!) && Number.isFinite(ys[clampedIndex]!)) {
+      const [vx, vy] = toScreen(xs[clampedIndex]!, ys[clampedIndex]!);
+      const heading = headings?.[clampedIndex];
+      drawVehicleIcon(ctx, vx, vy, heading, VEHICLE_ICON_PX, resolveColor("var(--ulog-series-8)"));
+    }
+
+    // HUD text — armed/landed/mode/airspeed and two of the altitude
+    // sources come from different topics/timelines than xs/ys, so look up
+    // whatever value was most recently in effect at the current sample's
+    // own time (zero-order hold), same technique the playback clock uses
+    // to map elapsed time back to an index.
+    const atOrBefore = (series: TimeSeries): number => series.values[findIndexAtOrBefore(series.times, times[clampedIndex]!)]!;
+
+    if (relValueEl && altitudesDown) {
+      const v = altitudesDown[clampedIndex]!;
+      relValueEl.textContent = Number.isFinite(v) ? `${(-v).toFixed(1)} m` : "—";
+    }
+    if (mslValueEl && altitudesDown && refAlt) {
+      const rel = altitudesDown[clampedIndex]!;
+      const ref = refAlt[clampedIndex]!;
+      mslValueEl.textContent = Number.isFinite(rel) && Number.isFinite(ref) ? `${(ref - rel).toFixed(1)} m` : "—";
+    }
+    if (gpsAltValueEl && gpsAlt) {
+      const v = atOrBefore(gpsAlt);
+      gpsAltValueEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
+    }
+    if (aglValueEl && distBottom && distBottomValid) {
+      const valid = distBottomValid[clampedIndex] === 1;
+      const v = distBottom[clampedIndex]!;
+      aglValueEl.textContent = valid && Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
+    }
+    if (baroValueEl && baroAlt) {
+      const v = atOrBefore(baroAlt);
+      baroValueEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
+    }
+
+    if (airspeed) {
+      const v = atOrBefore(airspeed);
+      airspeedValueEl.textContent = Number.isFinite(v) ? v.toFixed(1) : "—";
+    }
+
+    if (compassNeedle && headings) {
+      const heading = headings[clampedIndex];
+      if (Number.isFinite(heading)) {
+        compassNeedle.style.transform = `translate(-50%, -100%) rotate(${(heading! * 180) / Math.PI}deg)`;
+      }
+    }
+
+    if (navState) {
+      const v = atOrBefore(navState);
+      if (Number.isFinite(v)) {
+        modeChip.textContent = navStateLabel(v);
+      }
+    }
+
+    if (armed) {
+      const isArmed = atOrBefore(armed) === 1;
+      armedChip.textContent = isArmed ? "ARMED" : "DISARMED";
+      armedChip.classList.toggle("armed", isArmed);
+    }
+    if (landed) {
+      const isLanded = atOrBefore(landed) === 1;
+      landedChip.textContent = isLanded ? "ON GROUND" : "IN AIR";
+      landedChip.classList.toggle("in-air", !isLanded);
+    }
+  };
+
+  // Scroll to zoom (around the cursor), drag to pan, double-click to reset
+  // — the usual map/graphics-viewer convention, matching the tile layer
+  // this view can now show.
+  canvasWrap.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const rect = canvasWrap.getBoundingClientRect();
+      const mx = event.clientX - rect.left;
+      const my = event.clientY - rect.top;
+      const cx = canvasWrap.clientWidth / 2;
+      const cy = canvasWrap.clientHeight / 2;
+      const newScale = Math.max(MIN_VIEW_SCALE, Math.min(MAX_VIEW_SCALE, viewScale * Math.pow(1.0015, -event.deltaY)));
+      const actualFactor = newScale / viewScale;
+      viewPanX = mx - cx - (mx - cx - viewPanX) * actualFactor;
+      viewPanY = my - cy - (my - cy - viewPanY) * actualFactor;
+      viewScale = newScale;
+      draw(Number(slider.value));
+    },
+    { passive: false },
+  );
+
+  let panStartX = 0;
+  let panStartY = 0;
+  let panOriginX = 0;
+  let panOriginY = 0;
+  const onPanMove = (event: MouseEvent) => {
+    viewPanX = panOriginX + (event.clientX - panStartX);
+    viewPanY = panOriginY + (event.clientY - panStartY);
+    draw(Number(slider.value));
+  };
+  const onPanEnd = () => {
+    canvasWrap.style.cursor = "";
+    document.removeEventListener("mousemove", onPanMove);
+    document.removeEventListener("mouseup", onPanEnd);
+  };
+  canvasWrap.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    panStartX = event.clientX;
+    panStartY = event.clientY;
+    panOriginX = viewPanX;
+    panOriginY = viewPanY;
+    canvasWrap.style.cursor = "grabbing";
+    document.addEventListener("mousemove", onPanMove);
+    document.addEventListener("mouseup", onPanEnd);
+  });
+  canvasWrap.addEventListener("dblclick", () => {
+    viewScale = 1;
+    viewPanX = 0;
+    viewPanY = 0;
+    draw(Number(slider.value));
+  });
+
+  const updateDisplay = (index: number) => {
+    // slider.min, not a literal 0: the "Skip Pre-Arm" trim (if on) raises
+    // it above 0, and nothing should be able to scrub earlier than that.
+    const clamped = Math.max(Number(slider.min), Math.min(times.length - 1, index));
+    slider.value = String(clamped);
+    timeLabel.textContent = formatTimeTick(times[clamped]!, 1);
+    draw(clamped);
+  };
+
+  let isPlaying = false;
+  let rafId: number | undefined;
+  let anchorWallMs = 0;
+  let anchorTimeSec = 0;
+
+  const reanchor = (index: number) => {
+    anchorWallMs = performance.now();
+    anchorTimeSec = times[Math.max(0, Math.min(times.length - 1, index))]!;
+  };
+
+  const pausePlayback = () => {
+    isPlaying = false;
+    playBtn.textContent = "▶ Play";
+    playBtn.classList.remove("active");
+    if (rafId != undefined) {
+      cancelAnimationFrame(rafId);
+      rafId = undefined;
+    }
+  };
+
+  const tick = () => {
+    const speed = Number(speedSelect.value);
+    const targetTimeSec = anchorTimeSec + ((performance.now() - anchorWallMs) / 1000) * speed;
+    updateDisplay(findIndexAtOrBefore(times, targetTimeSec));
+    if (targetTimeSec >= times[times.length - 1]!) {
+      pausePlayback();
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  };
+
+  const play = () => {
+    if (isPlaying) {
+      return;
+    }
+    isPlaying = true;
+    playBtn.textContent = "⏸ Pause";
+    playBtn.classList.add("active");
+    const currentIndex = Number(slider.value);
+    reanchor(currentIndex >= times.length - 1 ? Number(slider.min) : currentIndex);
+    rafId = requestAnimationFrame(tick);
+  };
+
+  const stopPlayback = () => {
+    pausePlayback();
+    updateDisplay(Number(slider.min));
+  };
+
+  playBtn.addEventListener("click", () => (isPlaying ? pausePlayback() : play()));
+  stopBtn.addEventListener("click", stopPlayback);
+
+  slider.addEventListener("input", () => {
+    const index = Number(slider.value);
+    timeLabel.textContent = formatTimeTick(times[index]!, 1);
+    draw(index);
+    if (isPlaying) {
+      reanchor(index);
+    }
+  });
+
+  new ResizeObserver(() => draw(Number(slider.value))).observe(canvasWrap);
+  draw(0);
+}
+
+function buildReplayPane(summary: LogSummary): HTMLElement {
+  const pane = el("section", "tab-pane fixed-toolbar replay-pane");
+  pane.dataset.tab = "replay";
+
+  const topic = findTopic(summary, "vehicle_local_position");
+  if (!topic) {
+    pane.appendChild(
+      el("div", "centered-note", "No vehicle_local_position data in this log — nothing to replay."),
+    );
+    return pane;
+  }
+  const hasField = (name: string) => topic.fields.some((f) => f.name === name);
+  if (!hasField("x") || !hasField("y")) {
+    pane.appendChild(
+      el(
+        "div",
+        "centered-note",
+        "This log's vehicle_local_position doesn't have x/y fields — nothing to replay.",
+      ),
+    );
+    return pane;
+  }
+  const hasHeading = hasField("heading");
+  const hasZ = hasField("z");
+  const hasRefAlt = hasField("ref_alt");
+  const hasDistBottom = hasField("dist_bottom") && hasField("dist_bottom_valid");
+  const hasGpsAnchorFields = hasField("ref_lat") && hasField("ref_lon") && hasField("xy_global");
+
+  const gpsTopic = findTopic(summary, "sensor_gps", "vehicle_gps_position");
+  const hasFixType = gpsTopic?.fields.some((f) => f.name === "fix_type") ?? false;
+  const canAttemptMap = hasGpsAnchorFields && gpsTopic != undefined && hasFixType;
+
+  const armedTopic = findTopic(summary, "actuator_armed");
+  const landedTopic = findTopic(summary, "vehicle_land_detected");
+  const airspeedTopic = findTopic(summary, "airspeed_validated", "airspeed");
+  const statusTopic = findTopic(summary, "vehicle_status");
+  const airDataTopic = findTopic(summary, "vehicle_air_data");
+
+  const homeTopic = findTopic(summary, "home_position");
+  const hasHomeLocal =
+    (homeTopic?.fields.some((f) => f.name === "x") ?? false) &&
+    (homeTopic?.fields.some((f) => f.name === "y") ?? false) &&
+    (homeTopic?.fields.some((f) => f.name === "valid_lpos") ?? false);
+
+  // Waypoints only make sense in map mode — position_setpoint carries
+  // lat/lon, not a local-frame equivalent to fall back to.
+  const spTripletTopic = findTopic(summary, "position_setpoint_triplet");
+  const hasWaypointFields =
+    canAttemptMap &&
+    (spTripletTopic?.fields.some((f) => f.name === "current.lat") ?? false) &&
+    (spTripletTopic?.fields.some((f) => f.name === "current.lon") ?? false) &&
+    (spTripletTopic?.fields.some((f) => f.name === "current.valid") ?? false);
+  // current.acceptance_radius is the *effective* radius PX4 used for that
+  // specific waypoint at the time — not necessarily the same as NAV_ACC_RAD's
+  // own logged value (a mission item can override it, and NAV_ACC_RAD's
+  // change history has no trustworthy timestamps to line up against
+  // waypoint timing anyway — see paramScan.ts's changesByParam comment).
+  // Reading it per-setpoint sidesteps that entirely and is correct even if
+  // NAV_ACC_RAD changed mid-flight.
+  const hasAcceptanceRadius = spTripletTopic?.fields.some((f) => f.name === "current.acceptance_radius") ?? false;
+
+  const loadingNote = el("div", "centered-note", "Loading flight path…");
+  pane.appendChild(loadingNote);
+
+  Promise.all([
+    fetchSeriesAdHoc(topic.msgId, "x"),
+    fetchSeriesAdHoc(topic.msgId, "y"),
+    hasHeading ? fetchSeriesAdHoc(topic.msgId, "heading") : Promise.resolve(undefined),
+    hasZ ? fetchSeriesAdHoc(topic.msgId, "z") : Promise.resolve(undefined),
+    hasRefAlt ? fetchSeriesAdHoc(topic.msgId, "ref_alt") : Promise.resolve(undefined),
+    hasDistBottom ? fetchSeriesAdHoc(topic.msgId, "dist_bottom") : Promise.resolve(undefined),
+    hasDistBottom ? fetchSeriesAdHoc(topic.msgId, "dist_bottom_valid") : Promise.resolve(undefined),
+    // Everything from here down is an optional HUD/marker enhancement —
+    // any failure just means that one element doesn't show, not a broken
+    // replay.
+    fetchOptionalSeries(armedTopic, "armed"),
+    fetchOptionalSeries(landedTopic, "landed"),
+    fetchOptionalSeries(airspeedTopic, "true_airspeed_m_s"),
+    fetchOptionalSeries(statusTopic, "nav_state"),
+    fetchOptionalSeries(airDataTopic, "baro_alt_meter"),
+    fetchOptionalSeries(gpsTopic, "altitude_msl_m"),
+    hasHomeLocal
+      ? Promise.all([
+          fetchSeriesAdHoc(homeTopic!.msgId, "x"),
+          fetchSeriesAdHoc(homeTopic!.msgId, "y"),
+          fetchSeriesAdHoc(homeTopic!.msgId, "valid_lpos"),
+        ])
+          .then(([hx, hy, hvalid]) => lastValidHome(hx.values, hy.values, hvalid.values))
+          .catch(() => undefined)
+      : Promise.resolve(undefined),
+    hasWaypointFields
+      ? Promise.all([
+          fetchSeriesAdHoc(spTripletTopic!.msgId, "current.lat"),
+          fetchSeriesAdHoc(spTripletTopic!.msgId, "current.lon"),
+          fetchSeriesAdHoc(spTripletTopic!.msgId, "current.valid"),
+          hasAcceptanceRadius
+            ? fetchSeriesAdHoc(spTripletTopic!.msgId, "current.acceptance_radius")
+            : Promise.resolve(undefined),
+        ])
+          .then(([lat, lon, valid, radius]) => dedupeWaypoints(lat.values, lon.values, valid.values, radius?.values))
+          .catch(() => [] as ReplayWaypoint[])
+      : Promise.resolve([] as ReplayWaypoint[]),
+    canAttemptMap
+      ? Promise.all([
+          fetchSeriesAdHoc(topic.msgId, "ref_lat"),
+          fetchSeriesAdHoc(topic.msgId, "ref_lon"),
+          fetchSeriesAdHoc(topic.msgId, "xy_global"),
+          fetchSeriesAdHoc(gpsTopic!.msgId, "fix_type"),
+        ])
+          .then(
+            ([refLat, refLon, xyGlobal, fixType]): ReplayGpsData => ({
+              refLat: refLat.values,
+              refLon: refLon.values,
+              xyGlobal: xyGlobal.values,
+              fixTypes: fixType.values,
+            }),
+          )
+          // The map background is an optional enhancement — any failure
+          // fetching its inputs just means no map, not a broken replay.
+          .catch(() => undefined)
+      : Promise.resolve(undefined),
+  ])
+    .then(
+      ([
+        xSeries,
+        ySeries,
+        headingSeries,
+        zSeries,
+        refAltSeries,
+        distBottomSeries,
+        distBottomValidSeries,
+        armed,
+        landed,
+        airspeed,
+        navState,
+        baroAlt,
+        gpsAlt,
+        home,
+        waypoints,
+        gpsData,
+      ]) => {
+        loadingNote.remove();
+        renderReplayScene(pane, {
+          times: xSeries.times,
+          xs: xSeries.values,
+          ys: ySeries.values,
+          headings: headingSeries?.values,
+          altitudesDown: zSeries?.values,
+          refAlt: refAltSeries?.values,
+          distBottom: distBottomSeries?.values,
+          distBottomValid: distBottomValidSeries?.values,
+          armed,
+          landed,
+          airspeed,
+          navState,
+          baroAlt,
+          gpsAlt,
+          home,
+          waypoints,
+          gpsData,
+        });
+      },
+    )
+    .catch((message: string) => {
+      loadingNote.textContent = `Failed to load flight path: ${message}`;
+    });
+
+  return pane;
+}
+
 function buildPlotsPane(): HTMLElement {
   const pane = el("section", "tab-pane");
   pane.dataset.tab = "plots";
@@ -3317,6 +4529,7 @@ function buildUi(summary: LogSummary): void {
   const tabs = el("nav", "tabs");
   const tabDefs: [string, string][] = [
     ["plots", "Plots"],
+    ["replay", "Replay"],
     ["info", "Info"],
     ["parameters", `Parameters (${summary.parameters.length})`],
     ["messages", `Messages (${summary.logMessages.length})`],
@@ -3333,6 +4546,7 @@ function buildUi(summary: LogSummary): void {
 
   app.appendChild(buildPlotsPane());
   builtPanes.clear();
+  lazyPaneBuilders.set("replay", () => buildReplayPane(summary));
   lazyPaneBuilders.set("info", () => buildInfoPane(summary));
   lazyPaneBuilders.set("parameters", () => buildParametersPane(summary));
   lazyPaneBuilders.set("messages", () => buildMessagesPane(summary));
@@ -3379,7 +4593,13 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
       // contains a match for this name.
       state.lockedSavedViewName = message.name;
       break;
-    case "series":
+    case "series": {
+      const adHocKey = seriesKey(message.msgId, message.field);
+      const adHoc = adHocSeriesResolvers.get(adHocKey);
+      if (adHoc) {
+        adHocSeriesResolvers.delete(adHocKey);
+        adHoc.resolve({ times: new Float64Array(message.times), values: new Float64Array(message.values) });
+      }
       addSeries(
         message.msgId,
         message.field,
@@ -3387,7 +4607,14 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
         new Float64Array(message.values),
       );
       break;
+    }
     case "seriesError": {
+      const adHocKey = seriesKey(message.msgId, message.field);
+      const adHoc = adHocSeriesResolvers.get(adHocKey);
+      if (adHoc) {
+        adHocSeriesResolvers.delete(adHocKey);
+        adHoc.reject(message.message);
+      }
       const panel = state.panels.find((p) =>
         state.pending.has(pendingKey(p.id, message.msgId, message.field)),
       );
