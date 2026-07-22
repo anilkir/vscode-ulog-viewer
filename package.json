@@ -2,7 +2,7 @@
   "name": "vscode-ulog-viewer",
   "displayName": "PX4 ULog Viewer",
   "description": "View PX4 ULog (.ulg) flight logs: log info, parameters, messages and time-series plots.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "anilkir",
   "license": "SEE LICENSE IN LICENSE",
   "engines": {
