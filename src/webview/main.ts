@@ -246,7 +246,7 @@ const state: AppState = {
   topicFilter: "",
   parameterFilter: "",
   parameterQuickFilter: "all",
-  currentTab: "plots",
+  currentTab: "data",
   timeUnit: "seconds",
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   zeroOffset: false,
@@ -275,7 +275,7 @@ let saveAreaEl: HTMLElement;
 
 // Info/Parameters/Messages panes can each hold thousands of rows (a large
 // log easily has 1000+ parameters and 1000+ log messages) — building all of
-// that DOM eagerly delayed showing the Plots tab, which is what a user
+// that DOM eagerly delayed showing the Data tab, which is what a user
 // almost always wants first. Build those three lazily, on first visit.
 const lazyPaneBuilders = new Map<string, () => HTMLElement>();
 const builtPanes = new Map<string, HTMLElement>();
@@ -456,7 +456,7 @@ function formatWallClockDate(rawBootRelativeSec: number): string {
 }
 
 /** The log's own start time as an absolute date, for the Info page — always
- *  UTC (unlike `formatWallClock`, which follows the Plots tab's own
+ *  UTC (unlike `formatWallClock`, which follows the Data tab's own
  *  user-configurable timezone), since this is a one-off fact about the log
  *  rather than an interactive axis, and UTC keeps it unambiguous regardless
  *  of who's reading it or where. */
@@ -3865,7 +3865,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
 
 function buildPlotsPane(): HTMLElement {
   const pane = el("section", "tab-pane");
-  pane.dataset.tab = "plots";
+  pane.dataset.tab = "data";
 
   const sidebar = el("aside", "sidebar");
   sidebar.appendChild(
@@ -4372,7 +4372,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   const { table, tbody } = makeResizableTable(["Time", "Level", "Message"], [130, 70]);
   table.classList.add("messages-table");
   enableRowSelection(tbody);
-  // Date included (unlike the Plots tab's Clock axis) — a bare time-of-day
+  // Date included (unlike the Data tab's Clock axis) — a bare time-of-day
   // would be ambiguous for a log that happens to span a midnight rollover.
   const formatClockCell = (timeSec: number) => `(${formatWallClockDate(timeSec)} ${formatWallClock(timeSec, 3)})`;
   const entries: { row: HTMLElement; message: LogMessageInfo }[] = [];
@@ -4488,7 +4488,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   clockToggleBtn.title = utcAvailable
     ? "Show each message's wall-clock time (from this log's GPS), in the timezone below"
     : (summary.utcUnavailableReason ?? "No GPS UTC reference available in this log");
-  // Same field as the Plots tab's Clock time axis — same shared
+  // Same field as the Data tab's Clock time axis — same shared
   // state.timezone too, so picking a zone in either place applies to both.
   const timezoneField = el("label", "timezone-field");
   timezoneField.title = "Timezone used for the Clock column";
@@ -4532,7 +4532,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   timezoneSelect.addEventListener("change", () => {
     state.timezone = timezoneSelect.value;
     refreshClockCells();
-    // Keeps an already-open Plots tab's own Clock-mode axis (if it's using
+    // Keeps an already-open Data tab's own Clock-mode axis (if it's using
     // one) in sync too, same as changing it from that tab's own dropdown.
     rebuildAllCharts();
   });
@@ -4800,7 +4800,7 @@ function switchTab(name: string): void {
   for (const pane of app.querySelectorAll<HTMLElement>(".tab-pane")) {
     pane.classList.toggle("active", pane.dataset.tab === name);
   }
-  if (name === "plots") {
+  if (name === "data") {
     resizeAllCharts();
   }
 }
@@ -4823,7 +4823,7 @@ function buildUi(summary: LogSummary): void {
 
   const tabs = el("nav", "tabs");
   const tabDefs: [string, string][] = [
-    ["plots", "Plots"],
+    ["data", "Data"],
     ["replay", "Replay"],
     ["info", "Info"],
     ["parameters", `Parameters (${summary.parameters.length})`],
@@ -4848,7 +4848,7 @@ function buildUi(summary: LogSummary): void {
   lazyPaneBuilders.set("structure", () => buildStructurePane(summary));
 
   renderTopicList();
-  switchTab("plots");
+  switchTab("data");
 }
 
 /* ---------------------------------------------------------------------- */

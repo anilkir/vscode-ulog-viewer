@@ -170,7 +170,7 @@ body {
   padding: 0 12px 8px;
 }
 
-/* ---- Plots tab -------------------------------------------------------- */
+/* ---- Data tab --------------------------------------------------------- */
 
 .sidebar {
   width: 280px;
@@ -1541,10 +1541,10 @@ h3.section {
   cursor: pointer;
 }
 
-/* Light blue tint, matching the toggle/segmented buttons in the Plots
+/* Light blue tint, matching the toggle/segmented buttons in the Data tab
  * toolbar, rather than the neutral secondary-hover gray — these buttons
  * (Go, Prev/Next) have no "active" state of their own, but the request was
- * to make Parameters/Messages hovers visually consistent with Plots'. */
+ * to make Parameters/Messages hovers visually consistent with the Data tab's. */
 .pane-toolbar button:hover {
   background: color-mix(in srgb, var(--vscode-button-background) 30%, transparent);
 }
@@ -1558,7 +1558,7 @@ h3.section {
 }
 
 /* A plain on/off button living in a .pane-toolbar (e.g. Messages' "UTC"
- * toggle) — not `.toggle-btn`, which is styled for the Plots/Time-axis
+ * toggle) — not `.toggle-btn`, which is styled for the Data/Time-axis
  * toolbar specifically and would lose a specificity fight with
  * `.pane-toolbar button`'s own background here. */
 .pane-toolbar button.active {
@@ -1587,7 +1587,7 @@ h3.section {
 }
 
 /* Same fix again, for the Messages toolbar's "TZ:" dropdown — .timezone-
- * select's own 0.9em is right for .view-toolbar (Plots), which compounds
+ * select's own 0.9em is right for .view-toolbar (the Data tab), which compounds
  * the same way its own buttons already do, but compounds one step further
  * than .pane-toolbar's "Clock" button (font-size: inherit, no compounding),
  * making the two visibly different heights and therefore vertically
