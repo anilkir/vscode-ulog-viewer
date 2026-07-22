@@ -1515,6 +1515,17 @@ function clearAllPlots(): void {
   for (const panel of [...state.panels]) {
     removePanel(panel.id);
   }
+  // Otherwise the selector stays locked onto whatever view was loaded even
+  // though its panels are all gone now — leaving "Update View" offering to
+  // overwrite that saved view with this now-empty layout. Blanking the
+  // select's own value first matters: refreshSavedViewSelect() otherwise
+  // falls back to preserving whatever the dropdown currently shows.
+  if (state.lockedSavedViewName) {
+    state.lockedSavedViewName = undefined;
+    savedViewSelect.value = "";
+    refreshSavedViewSelect();
+    refreshSaveViewArea();
+  }
 }
 
 function resetAllZoom(): void {
