@@ -68,7 +68,7 @@ export function buildSummary(scan: UlogFileScanResult, fileName: string, fileSiz
       name,
       value: entry.value,
       defaultValue: scan.defaultsByParam.get(name),
-      changes: scan.changesByParam.get(name) ?? [],
+      changes: meaningfulParameterChanges(entry.value, scan.changesByParam.get(name) ?? []),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -96,6 +96,31 @@ export function buildSummary(scan: UlogFileScanResult, fileName: string, fileSiz
     untrustedTopics: scan.untrustedTopics,
     logLevelCounts: buildLogLevelCounts(scan),
   };
+}
+
+/**
+ * paramScan.ts records a "change" for every Parameter/ParameterDefault
+ * message physically found in the data section — that's simply where the
+ * message *is*, not evidence the value actually differs from what came
+ * before it. PX4 loggers can (and do) re-write a parameter's current value
+ * mid-flight without it having changed (e.g. a periodic full re-log of
+ * every parameter), which would otherwise show up as a spurious "changed
+ * mid-flight" entry whose value is identical to the initial one. Filters
+ * those out by walking the raw list in chronological order and keeping
+ * only entries that differ from whatever value was current immediately
+ * before them — starting from `initialValue` (the header/initial value,
+ * i.e. whatever was current the instant the data section began).
+ */
+function meaningfulParameterChanges(initialValue: number, rawChanges: number[]): number[] {
+  const meaningful: number[] = [];
+  let previousValue = initialValue;
+  for (const value of rawChanges) {
+    if (value !== previousValue) {
+      meaningful.push(value);
+    }
+    previousValue = value;
+  }
+  return meaningful;
 }
 
 function messageTypeLabel(typeCode: number): string {

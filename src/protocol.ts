@@ -33,11 +33,6 @@ export interface LogMessageInfo {
   message: string;
 }
 
-export interface ParameterChangeInfo {
-  timeSec: number;
-  value: number;
-}
-
 export interface ParameterInfo {
   name: string;
   value: number;
@@ -47,8 +42,15 @@ export interface ParameterInfo {
    * (older firmware) or this specific parameter never got one.
    */
   defaultValue: number | undefined;
-  /** Mid-flight changes to this parameter, in chronological order. */
-  changes: ParameterChangeInfo[];
+  /**
+   * Values this parameter genuinely changed to mid-flight, in chronological
+   * order (no-op re-writes of the already-current value are filtered out
+   * before this reaches here — see meaningfulParameterChanges in
+   * ulogData.ts). No timestamp: see changesByParam's own doc comment in
+   * paramScan.ts for why the closest available proxy isn't trustworthy
+   * enough to show as if it were exact.
+   */
+  changes: number[];
 }
 
 export interface MessageTypeCount {

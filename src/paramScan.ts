@@ -79,11 +79,6 @@ const DATA_SECTION_TYPES = new Set<number>([
   MessageType.Dropout,
 ]);
 
-export interface ParameterChange {
-  timeSec: number;
-  value: number;
-}
-
 export interface ParsedParameter {
   value: number;
   defaultTypes: number;
@@ -109,8 +104,16 @@ export interface UlogFileScanResult {
   dataSectionStart: number;
   /** Absolute end of the data section — may be less than the file size if an appended section follows (see the FlagBits case below). */
   dataSectionEnd: number;
-  /** Mid-flight parameter changes, keyed by parameter name, in chronological order. */
-  changesByParam: Map<string, ParameterChange[]>;
+  /**
+   * Mid-flight parameter changes, keyed by parameter name — each entry is
+   * just the value it changed to, in chronological order. No timestamp:
+   * Parameter messages don't carry their own, and the closest available
+   * proxy (the most recently-seen Data message's own timestamp at the
+   * point this message was encountered in the file) is only an
+   * approximation of when it actually happened, not trustworthy enough to
+   * surface as if it were exact.
+   */
+  changesByParam: Map<string, number[]>;
   /**
    * PX4's recorded default value for each parameter, from 'Q'
    * (ParameterDefault) messages — distinct from the *current* value. Lets
@@ -340,7 +343,7 @@ export async function scanUlogFile(filelike: Filelike): Promise<UlogFileScanResu
   const definitions = new Map<string, MessageDefinition>();
   const subscriptions = new Map<number, Subscription>();
   const dataMessageCounts = new Map<number, number>();
-  const changesByParam = new Map<string, ParameterChange[]>();
+  const changesByParam = new Map<string, number[]>();
   const defaultsByParam = new Map<string, number>();
   const logMessages: LogMessageInfo[] = [];
   const timestampOffsetCache = new Map<number, number>();
@@ -490,12 +493,11 @@ export async function scanUlogFile(filelike: Filelike): Promise<UlogFileScanResu
               defaultsByParam.set(field!.name, value);
             }
             if (inDataSection) {
-              const entry: ParameterChange = { timeSec: Number(currentUs) / US_PER_SEC, value };
               const list = changesByParam.get(field!.name);
               if (list) {
-                list.push(entry);
+                list.push(value);
               } else {
-                changesByParam.set(field!.name, [entry]);
+                changesByParam.set(field!.name, [value]);
               }
             } else {
               // Header section: this is the current/initial value — last

@@ -2674,18 +2674,21 @@ function buildParameterRows(param: ParameterInfo, visibleIndex: number): HTMLEle
   badge.title = "Show change history";
   flagCell.appendChild(badge);
 
+  // No timestamp column — see ParameterInfo.changes' own doc comment for
+  // why the closest available proxy for "when" isn't trustworthy enough to
+  // show. An ordinal ("#1", "#2", ...) at least conveys the order.
   const history = el("div", "param-history");
   history.style.display = "none";
   const initialRow = el("div", "param-history-row");
   initialRow.appendChild(el("span", "param-history-time", "initial"));
   initialRow.appendChild(el("span", "param-history-value num", formatNumber(param.value)));
   history.appendChild(initialRow);
-  for (const change of param.changes) {
+  param.changes.forEach((value, index) => {
     const line = el("div", "param-history-row");
-    line.appendChild(el("span", "param-history-time", formatTimeTick(change.timeSec, 1)));
-    line.appendChild(el("span", "param-history-value num", formatNumber(change.value)));
+    line.appendChild(el("span", "param-history-time", `#${index + 1}`));
+    line.appendChild(el("span", "param-history-value num", formatNumber(value)));
     history.appendChild(line);
-  }
+  });
   badge.addEventListener("click", () => {
     history.style.display = history.style.display === "none" ? "block" : "none";
   });
@@ -3208,15 +3211,10 @@ function buildUi(summary: LogSummary): void {
   topbar.appendChild(el("span", "file-meta", metaParts.join(" · ")));
 
   const tabs = el("nav", "tabs");
-  const changedParamCount = summary.parameters.filter((p) => p.changes.length > 0).length;
-  const paramTabLabel =
-    changedParamCount > 0
-      ? `Parameters (${summary.parameters.length}, ${changedParamCount} changed)`
-      : `Parameters (${summary.parameters.length})`;
   const tabDefs: [string, string][] = [
     ["plots", "Plots"],
     ["info", "Info"],
-    ["parameters", paramTabLabel],
+    ["parameters", `Parameters (${summary.parameters.length})`],
     ["messages", `Messages (${summary.logMessages.length})`],
     ["structure", "Structure"],
   ];
