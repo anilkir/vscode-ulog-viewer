@@ -5,7 +5,7 @@
  * fast low-level scan in paramScan.ts — see that module's docstring for why
  * `ulog.open()`/`readMessages()` are never used at all.
  */
-import { MessageType, type FieldPrimitive, type Filelike, type Subscription } from "@foxglove/ulog";
+import { MessageType, type FieldPrimitive, type Filelike, type MessageDefinition, type Subscription } from "@foxglove/ulog";
 import { scanTopicColumns, type UlogFileScanResult } from "./paramScan";
 import type { FieldInfo, FormatDefinitionInfo, LogSummary, MessageTypeCount, TopicInfo } from "./protocol";
 
@@ -17,15 +17,41 @@ export interface TopicColumns {
   columns: Map<string, Float64Array>;
 }
 
-/** Expand a subscription's definition into flat, plottable field names. */
-export function plottableFields(subscription: Subscription): FieldInfo[] {
+/**
+ * Expand a subscription's definition into flat, plottable field names.
+ * Nested structs (e.g. position_setpoint_triplet's `current`/`previous`/
+ * `next`, each a `position_setpoint`) get exactly one level of flattening —
+ * `current.lat`, `current.lon`, etc — since that's the only depth any
+ * feature here actually needs; a nested field that's itself complex, or a
+ * complex array, is left alone rather than generalizing further.
+ */
+export function plottableFields(subscription: Subscription, definitions: Map<string, MessageDefinition>): FieldInfo[] {
   const fields: FieldInfo[] = [];
   for (const field of subscription.fields) {
-    // Skip padding, nested structs, strings, and the x-axis timestamp itself.
-    if (field.name.startsWith("_") || field.isComplex || field.type === "char") {
+    // Skip padding, strings, and the x-axis timestamp itself.
+    if (field.name.startsWith("_") || field.type === "char" || field.name === "timestamp") {
       continue;
     }
-    if (field.name === "timestamp") {
+    if (field.isComplex) {
+      if (field.arrayLength != undefined) {
+        continue;
+      }
+      const nestedDef = definitions.get(field.type);
+      if (!nestedDef) {
+        continue;
+      }
+      for (const inner of nestedDef.fields) {
+        if (inner.name.startsWith("_") || inner.isComplex || inner.type === "char" || inner.name === "timestamp") {
+          continue;
+        }
+        if (inner.arrayLength != undefined) {
+          for (let i = 0; i < inner.arrayLength; i++) {
+            fields.push({ name: `${field.name}.${inner.name}[${i}]`, type: inner.type });
+          }
+        } else {
+          fields.push({ name: `${field.name}.${inner.name}`, type: inner.type });
+        }
+      }
       continue;
     }
     if (field.arrayLength != undefined) {
@@ -181,7 +207,7 @@ function buildTopics(scan: UlogFileScanResult): TopicInfo[] {
       messageName: subscription.name,
       multiId: subscription.multiId,
       count: scan.dataMessageCounts.get(msgId) ?? 0,
-      fields: plottableFields(subscription),
+      fields: plottableFields(subscription, scan.definitions),
     });
   }
   return topics.sort((a, b) => a.name.localeCompare(b.name));

@@ -730,6 +730,32 @@ export async function scanTopicColumns(
       if (field.type === "uint64_t") {
         timestampOffset = curOffset;
       }
+    } else if (field.isComplex && field.arrayLength == undefined) {
+      // One level of struct flattening — see plottableFields()'s matching
+      // comment in ulogData.ts; keep the two in sync by hand.
+      const nestedDef = scan.definitions.get(field.type);
+      if (nestedDef) {
+        let innerOffset = 0;
+        for (const inner of nestedDef.fields) {
+          const innerSize = fieldSize(inner, scan.definitions);
+          if (!(inner.name.startsWith("_") || inner.isComplex || inner.type === "char" || inner.name === "timestamp")) {
+            const targets: ColumnTarget[] = [];
+            if (inner.arrayLength != undefined) {
+              for (let i = 0; i < inner.arrayLength; i++) {
+                const column = new Float64Array(capacity);
+                columns.set(`${field.name}.${inner.name}[${i}]`, column);
+                targets.push({ column, index: i });
+              }
+            } else {
+              const column = new Float64Array(capacity);
+              columns.set(`${field.name}.${inner.name}`, column);
+              targets.push({ column });
+            }
+            fieldTasks.push({ byteOffset: curOffset + innerOffset, field: inner, targets });
+          }
+          innerOffset += innerSize * (inner.arrayLength ?? 1);
+        }
+      }
     } else if (!(field.name.startsWith("_") || field.isComplex || field.type === "char")) {
       const targets: ColumnTarget[] = [];
       if (field.arrayLength != undefined) {
