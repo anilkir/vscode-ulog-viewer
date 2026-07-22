@@ -1097,11 +1097,25 @@ function createMarkerAt(timeSec: number): void {
 }
 
 /** Min/max across all of a panel's plotted values, padded a bit past the true extremes. */
+/** Auto-ranges Y to whatever's currently *visible* on the x-axis, not the
+ *  whole series — reads the chart's own live x-scale (already the zoomed
+ *  window, if any, since that's exactly what setScale("x", ...) updates)
+ *  rather than tracking zoom state separately. Falls back to unbounded
+ *  (the full series) if there's no chart yet to read a scale from. */
 function computeAutoYRange(panel: PlotPanel): [number, number] {
+  const xScale = panel.chart?.scales.x;
+  const xMin = xScale?.min ?? -Infinity;
+  const xMax = xScale?.max ?? Infinity;
+  const offsetSec = state.zeroOffset ? (state.summary?.timeRange[0] ?? 0) : 0;
   let min = Infinity;
   let max = -Infinity;
   for (const s of panel.series) {
-    for (const v of s.values) {
+    for (let i = 0; i < s.values.length; i++) {
+      const plottedTime = s.times[i]! - offsetSec;
+      if (plottedTime < xMin || plottedTime > xMax) {
+        continue;
+      }
+      const v = s.values[i]!;
       if (Number.isFinite(v)) {
         if (v < min) {
           min = v;
