@@ -399,6 +399,38 @@ function formatWallClock(rawBootRelativeSec: number, decimals: number): string {
   }
 }
 
+/** Just the "YYYY-MM-DD" portion of a wall-clock instant, in state.timezone
+ *  — used alongside formatWallClock's own time-of-day where a bare time
+ *  would be ambiguous (the Messages table's Clock column, which can span
+ *  a log that crosses midnight). Built from individually-formatted parts,
+ *  not the date's own locale-dependent order/separators, for a consistent
+ *  prefix regardless of the reader's locale — same reasoning as
+ *  `formatUtcStartTime`'s own ISO-style construction. Returns "" (not "—",
+ *  since callers prepend this to formatWallClock's own placeholder) when
+ *  this log has no GPS UTC reference. */
+function formatWallClockDate(rawBootRelativeSec: number): string {
+  const utcOffsetUsec = state.summary?.utcOffsetUsec;
+  if (utcOffsetUsec == undefined) {
+    return "";
+  }
+  const epochMs = (rawBootRelativeSec * US_PER_SEC + utcOffsetUsec) / 1000;
+  if (!Number.isFinite(epochMs)) {
+    return "";
+  }
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, {
+      timeZone: state.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(epochMs));
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  } catch {
+    return "";
+  }
+}
+
 /** The log's own start time as an absolute date, for the Info page — always
  *  UTC (unlike `formatWallClock`, which follows the Plots tab's own
  *  user-configurable timezone), since this is a one-off fact about the log
@@ -413,24 +445,6 @@ function formatUtcStartTime(summary: LogSummary): string {
     return "Not available (no GPS UTC reference in this log)";
   }
   return `${new Date(epochMs).toISOString().replace("T", " ").replace("Z", "")} UTC`;
-}
-
-/** A single boot-relative timestamp as an absolute UTC instant — same fixed-
- *  UTC convention as `formatUtcStartTime` (not the Plots tab's configurable
- *  timezone, since this is meant to be an unambiguous per-row fact), but
- *  without the trailing "UTC" label, since callers show many of these next
- *  to each other under a column/section already labeled that way. Returns
- *  "—" when this log has no GPS UTC reference, same as `formatWallClock`. */
-function formatUtcTimestamp(rawBootRelativeSec: number): string {
-  const utcOffsetUsec = state.summary?.utcOffsetUsec;
-  if (utcOffsetUsec == undefined) {
-    return "—";
-  }
-  const epochMs = (rawBootRelativeSec * US_PER_SEC + utcOffsetUsec) / 1000;
-  if (!Number.isFinite(epochMs)) {
-    return "—";
-  }
-  return new Date(epochMs).toISOString().replace("T", " ").replace("Z", "");
 }
 
 function decimalsForStep(step: number): number {
@@ -2851,6 +2865,9 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   const { table, tbody } = makeResizableTable(["Time", "Level", "Message"], [130, 70]);
   table.classList.add("messages-table");
   enableRowSelection(tbody);
+  // Date included (unlike the Plots tab's Clock axis) — a bare time-of-day
+  // would be ambiguous for a log that happens to span a midnight rollover.
+  const formatClockCell = (timeSec: number) => `(${formatWallClockDate(timeSec)} ${formatWallClock(timeSec, 3)})`;
   const entries: { row: HTMLElement; message: LogMessageInfo }[] = [];
   for (const message of summary.logMessages) {
     const row = el("tr");
@@ -2858,9 +2875,8 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
     const timeCell = el("td", "num time-cell");
     if (saneTime) {
       timeCell.appendChild(el("span", "time-cell-raw", message.timeSec.toFixed(3)));
-      timeCell.appendChild(el("span", "time-cell-alt", `(${formatTimeTick(message.timeSec, 3)})`));
       if (utcAvailable) {
-        timeCell.appendChild(el("span", "time-cell-utc", formatUtcTimestamp(message.timeSec)));
+        timeCell.appendChild(el("span", "time-cell-clock", formatClockCell(message.timeSec)));
       }
     } else {
       timeCell.textContent = "—";
@@ -2960,36 +2976,79 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
       },
     ),
   );
-  const utcToggleBtn = el("button", undefined, "UTC") as HTMLButtonElement;
-  utcToggleBtn.classList.toggle("disabled", !utcAvailable);
-  utcToggleBtn.title = utcAvailable
-    ? "Show each message's absolute UTC timestamp (from this log's GPS)"
+  const clockToggleBtn = el("button", undefined, "Clock") as HTMLButtonElement;
+  clockToggleBtn.classList.toggle("disabled", !utcAvailable);
+  clockToggleBtn.title = utcAvailable
+    ? "Show each message's wall-clock time (from this log's GPS), in the timezone below"
     : (summary.utcUnavailableReason ?? "No GPS UTC reference available in this log");
-  // The Time column's default 130px (sized for "753.146 (12:33.146)") is
-  // too narrow for a full UTC datetime — widen it while the toggle is on,
-  // restoring whatever width was there before (the default, or a manual
-  // resize) rather than a hardcoded value, once it's off again.
+  // Same field as the Plots tab's Clock time axis — same shared
+  // state.timezone too, so picking a zone in either place applies to both.
+  const timezoneField = el("label", "timezone-field");
+  timezoneField.title = "Timezone used for the Clock column";
+  timezoneField.appendChild(el("span", "timezone-field-label", "TZ:"));
+  const timezoneSelect = el("select", "timezone-select");
+  for (const tz of listTimeZones()) {
+    const option = el("option", undefined, tz) as HTMLOptionElement;
+    option.value = tz;
+    timezoneSelect.appendChild(option);
+  }
+  timezoneSelect.value = state.timezone;
+  // Fits the column to whatever's actually the widest rendered value right
+  // now, rather than a hardcoded guess — scrollWidth reports a cell's full
+  // (unclamped) content size even though table-layout: fixed + overflow:
+  // hidden are visually clipping it to the column's current width.
   const timeCol = table.querySelector<HTMLElement>("colgroup col:first-child");
-  let prevTimeColWidth: string | undefined;
-  utcToggleBtn.addEventListener("click", () => {
+  const resizeTimeColumnToFit = () => {
+    if (!timeCol) {
+      return;
+    }
+    let maxWidth = 0;
+    for (const entry of entries) {
+      const cell = entry.row.querySelector<HTMLElement>(".time-cell");
+      if (cell) {
+        maxWidth = Math.max(maxWidth, cell.scrollWidth);
+      }
+    }
+    if (maxWidth > 0) {
+      timeCol.style.width = `${maxWidth}px`;
+    }
+  };
+  const refreshClockCells = () => {
+    for (const entry of entries) {
+      const cell = entry.row.querySelector<HTMLElement>(".time-cell-clock");
+      if (cell) {
+        cell.textContent = formatClockCell(entry.message.timeSec);
+      }
+    }
+    resizeTimeColumnToFit();
+  };
+  timezoneSelect.addEventListener("change", () => {
+    state.timezone = timezoneSelect.value;
+    refreshClockCells();
+    // Keeps an already-open Plots tab's own Clock-mode axis (if it's using
+    // one) in sync too, same as changing it from that tab's own dropdown.
+    rebuildAllCharts();
+  });
+  timezoneField.appendChild(timezoneSelect);
+  timezoneField.style.display = "none";
+  clockToggleBtn.addEventListener("click", () => {
     if (!utcAvailable) {
       return;
     }
-    const next = !utcToggleBtn.classList.contains("active");
-    utcToggleBtn.classList.toggle("active", next);
-    table.classList.toggle("show-utc", next);
-    if (timeCol) {
-      if (next) {
-        prevTimeColWidth = timeCol.style.width;
-        timeCol.style.width = "210px";
-      } else if (prevTimeColWidth != undefined) {
-        timeCol.style.width = prevTimeColWidth;
-      }
-    }
+    const next = !clockToggleBtn.classList.contains("active");
+    clockToggleBtn.classList.toggle("active", next);
+    table.classList.toggle("show-clock", next);
+    timezoneField.style.display = next ? "" : "none";
+    resizeTimeColumnToFit();
   });
-  toolbar.appendChild(utcToggleBtn);
+  resizeTimeColumnToFit();
   toolbar.appendChild(countLabel);
+  // The spacer's gap is what actually pushes Clock/TZ away from the level
+  // filter buttons — right next to "Errors" (as this used to be laid out)
+  // read as a 5th filter option instead of an unrelated display toggle.
   toolbar.appendChild(el("span", "spacer"));
+  toolbar.appendChild(clockToggleBtn);
+  toolbar.appendChild(timezoneField);
   toolbar.appendChild(makeIconButton(ICON_PREV, "Previous message", () => jumpTo((cursor <= 0 ? 0 : cursor - 1))));
   toolbar.appendChild(makeIconButton(ICON_NEXT, "Next message", () => jumpTo(cursor + 1)));
   toolbar.appendChild(el("span", undefined, "Jump to:"));

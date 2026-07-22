@@ -1158,26 +1158,19 @@ h3.section {
   font-variant-numeric: tabular-nums;
 }
 
-.time-cell-alt {
-  color: var(--vscode-descriptionForeground);
-  font-size: 0.85em;
-  margin-left: 4px;
-}
-
-/* Its own line (not inline after .time-cell-alt like that one is after
- * .time-cell-raw) — a full UTC datetime is too wide to share a line within
- * the Time column's own width. Hidden unless the "UTC" toggle is on; the
- * row's height (and vertical-align: top on the other cells) adjusts to fit
- * it automatically, same as any other table row content. */
-.time-cell-utc {
+/* Inline after .time-cell-raw, in parentheses — hidden unless the "Clock"
+ * toggle is on, since without a GPS UTC reference (or before the user asks
+ * for it) there's nothing meaningful to show here. */
+.time-cell-clock {
   display: none;
   color: var(--vscode-descriptionForeground);
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
+  margin-left: 4px;
 }
 
-.messages-table.show-utc .time-cell-utc {
-  display: block;
+.messages-table.show-clock .time-cell-clock {
+  display: inline;
 }
 
 .time-jump-input {
@@ -1257,6 +1250,16 @@ h3.section {
  * touching `.segmented button`'s general 0.9em, which the time-axis picker
  * in `.view-toolbar` still relies on to match its sibling `.toggle-btn`s. */
 .pane-toolbar .segmented button {
+  font-size: inherit;
+}
+
+/* Same fix again, for the Messages toolbar's "TZ:" dropdown — .timezone-
+ * select's own 0.9em is right for .view-toolbar (Plots), which compounds
+ * the same way its own buttons already do, but compounds one step further
+ * than .pane-toolbar's "Clock" button (font-size: inherit, no compounding),
+ * making the two visibly different heights and therefore vertically
+ * misaligned despite align-items: center on the shared row. */
+.pane-toolbar .timezone-select {
   font-size: inherit;
 }
 
