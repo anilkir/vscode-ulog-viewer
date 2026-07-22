@@ -1015,6 +1015,15 @@ table.data {
   border-spacing: 0;
   width: 100%;
   font-size: 0.95em;
+  /* A fixed ratio, not the default "normal" — "normal" computes each
+   * inline run's line-box height from *its own* font's metrics, so a row
+   * whose message happens to contain CJK text or an emoji (rendered via a
+   * fallback font with taller natural metrics than the UI font) grows
+   * visibly taller than every other row, with no text actually wrapping.
+   * An explicit ratio here is resolved against font-size instead, which
+   * doesn't change with the glyphs being rendered, so every row's line box
+   * comes out the same height regardless of what script it contains. */
+  line-height: 1.3;
 }
 
 table.data th {
@@ -1353,6 +1362,10 @@ td.muted {
   font-weight: 600;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
+  /* Transparent, not omitted: reserves the same 1px box-model space that
+   * .badge.level-debug's real border below uses, so a row with a debug
+   * message isn't a pixel taller than every other row. */
+  border: 1px solid transparent;
 }
 
 .badge.level-err {
@@ -1378,7 +1391,7 @@ td.muted {
 .badge.level-debug {
   background: color-mix(in srgb, var(--vscode-foreground) 10%, transparent);
   color: var(--vscode-descriptionForeground);
-  border: 1px solid var(--vscode-panel-border);
+  border-color: var(--vscode-panel-border);
   font-weight: 400;
 }
 
