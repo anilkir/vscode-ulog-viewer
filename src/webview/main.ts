@@ -54,6 +54,10 @@ const ICON_POINTS =
   '<path d="M2 12 L6 6 L10 9 L14 3" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
   '<circle cx="2" cy="12" r="1.5" fill="currentColor"/><circle cx="6" cy="6" r="1.5" fill="currentColor"/>' +
   '<circle cx="10" cy="9" r="1.5" fill="currentColor"/><circle cx="14" cy="3" r="1.5" fill="currentColor"/></svg>';
+const ICON_LINES =
+  '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+  '<path d="M2 12 L6 6 L10 9 L14 3" fill="none" stroke="currentColor" stroke-width="1.4" ' +
+  'stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_ZERO =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<rect x="2" y="3" width="1.6" height="10" fill="currentColor"/>' +
@@ -190,6 +194,7 @@ interface AppState {
   timezone: string;
   zeroOffset: boolean;
   showPoints: boolean;
+  showLines: boolean;
   showGrid: boolean;
   stepped: boolean;
   markers: Marker[];
@@ -222,6 +227,7 @@ const state: AppState = {
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   zeroOffset: false,
   showPoints: false,
+  showLines: true,
   showGrid: true,
   stepped: false,
 };
@@ -634,7 +640,10 @@ function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
       ...panel.series.map((s) => ({
         label: s.label,
         stroke: seriesColor(s.slot),
-        width: 2,
+        // 0 draws no visible line at all (uPlot's own idiom for a
+        // points-only series) — independent of showPoints, so turning both
+        // off just means an empty-looking chart, same as the other toggles.
+        width: state.showLines ? 2 : 0,
         spanGaps: true,
         // Zero-order hold: flat until the next sample, then a vertical step —
         // matches how a sampled/discrete signal actually changed, instead of
@@ -1528,6 +1537,12 @@ function setShowPoints(value: boolean): void {
   rebuildAllCharts();
 }
 
+function setShowLines(value: boolean): void {
+  state.showLines = value;
+  // Same full-rebuild reasoning as setShowPoints above.
+  rebuildAllCharts();
+}
+
 /* ---------------------------------------------------------------------- */
 /* Series management                                                       */
 /* ---------------------------------------------------------------------- */
@@ -2400,6 +2415,11 @@ function buildPlotsPane(): HTMLElement {
         rebuildAllCharts(true);
       },
     ),
+  );
+  viewToolbar.appendChild(
+    makeIconToggleButton(ICON_LINES, "Show lines connecting data points", state.showLines, (value) => {
+      setShowLines(value);
+    }),
   );
   viewToolbar.appendChild(
     makeIconToggleButton(ICON_POINTS, "Show data points", state.showPoints, (value) => {
