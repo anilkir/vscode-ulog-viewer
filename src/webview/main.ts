@@ -97,6 +97,10 @@ const ICON_PREV =
 const ICON_NEXT =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_CLOCK =
+  '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">' +
+  '<circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
+  '<path d="M8 4.5 V8 L10.5 9.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_MARKER =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<path d="M4 14 V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
@@ -2770,6 +2774,143 @@ function drawVehicleIcon(
   ctx.restore();
 }
 
+/** Artificial-horizon / attitude indicator — the standard cockpit instrument
+ *  for roll & pitch. A sky/ground disc banks by −roll and slides vertically
+ *  with pitch behind a *fixed* aircraft symbol, so the vehicle's orientation
+ *  reads exactly as a pilot's would: horizon tilts and drops as the airframe
+ *  banks and pitches up. Fixed bank-scale ticks around the top with a moving
+ *  pointer on the disc show bank angle; a pitch ladder gives magnitude.
+ *  `rollRad`/`pitchRad` are radians (PX4 sign: +roll = right bank, +pitch =
+ *  nose up); non-finite values render level. Redrawn each frame into its own
+ *  small canvas, sized to its CSS box (independent of the map canvas). */
+const ATTITUDE_SKY = "#4a90d9";
+const ATTITUDE_GROUND = "#9c6b3f";
+const ATTITUDE_SYMBOL = "#ffcf33";
+
+function drawAttitudeIndicator(canvas: HTMLCanvasElement, rollRad: number, pitchRad: number): void {
+  const dpr = window.devicePixelRatio || 1;
+  const size = canvas.clientWidth;
+  if (size <= 0) {
+    return;
+  }
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, size, size);
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size / 2 - 1;
+  const roll = Number.isFinite(rollRad) ? rollRad : 0;
+  const pitch = Number.isFinite(pitchRad) ? pitchRad : 0;
+  const rad2deg = 180 / Math.PI;
+  // ~±55° of pitch spans the radius — enough range without cramping the rungs.
+  const pitchPxPerDeg = radius / 55;
+
+  ctx.save();
+  // Everything sky/ground/ladder is clipped to the instrument disc.
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.clip();
+
+  ctx.translate(cx, cy);
+  ctx.rotate(-roll); // the disc banks opposite the (fixed) airframe symbol
+  ctx.save();
+  ctx.translate(0, pitch * rad2deg * pitchPxPerDeg); // nose-up slides horizon down
+
+  const span = radius * 3; // large enough to cover the disc at any bank/pitch
+  ctx.fillStyle = ATTITUDE_SKY;
+  ctx.fillRect(-span, -span, span * 2, span);
+  ctx.fillStyle = ATTITUDE_GROUND;
+  ctx.fillRect(-span, 0, span * 2, span);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-span, 0);
+  ctx.lineTo(span, 0);
+  ctx.stroke();
+
+  // Pitch ladder: a rung every 10°, longer+labeled every 20°.
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.lineWidth = 1;
+  ctx.font = "8px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let deg = -40; deg <= 40; deg += 10) {
+    if (deg === 0) {
+      continue;
+    }
+    const y = -deg * pitchPxPerDeg; // +deg (nose up) rung sits above center
+    const halfWidth = deg % 20 === 0 ? radius * 0.32 : radius * 0.16;
+    ctx.beginPath();
+    ctx.moveTo(-halfWidth, y);
+    ctx.lineTo(halfWidth, y);
+    ctx.stroke();
+    if (deg % 20 === 0) {
+      const label = String(Math.abs(deg));
+      ctx.fillText(label, -halfWidth - 7, y);
+      ctx.fillText(label, halfWidth + 7, y);
+    }
+  }
+  ctx.restore(); // undo pitch slide, still banked by -roll
+
+  // Bank scale on the rotating disc (0, ±10, ±20, ±30, ±45, ±60): banks with
+  // the horizon, so whichever tick sits under the fixed top index is the
+  // current bank angle — the traditional attitude-indicator arrangement.
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.lineWidth = 1;
+  for (const deg of [-60, -45, -30, -20, -10, 10, 20, 30, 45, 60]) {
+    const angle = -Math.PI / 2 + (deg * Math.PI) / 180;
+    const tickLen = deg % 30 === 0 ? 7 : 4;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+    ctx.lineTo(Math.cos(angle) * (radius - tickLen), Math.sin(angle) * (radius - tickLen));
+    ctx.stroke();
+  }
+  ctx.restore(); // undo bank rotation — back to the fixed screen frame
+
+  // Fixed top index (the bank reference the rotating scale reads against).
+  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - radius + 8);
+  ctx.lineTo(cx - 4, cy - radius + 1);
+  ctx.lineTo(cx + 4, cy - radius + 1);
+  ctx.closePath();
+  ctx.fill();
+
+  // Fixed aircraft symbol: two wing stubs and a center dot.
+  ctx.strokeStyle = ATTITUDE_SYMBOL;
+  ctx.fillStyle = ATTITUDE_SYMBOL;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - radius * 0.5, cy);
+  ctx.lineTo(cx - radius * 0.16, cy);
+  ctx.moveTo(cx - radius * 0.16, cy);
+  ctx.lineTo(cx - radius * 0.16, cy + radius * 0.1);
+  ctx.moveTo(cx + radius * 0.16, cy);
+  ctx.lineTo(cx + radius * 0.5, cy);
+  ctx.moveTo(cx + radius * 0.16, cy);
+  ctx.lineTo(cx + radius * 0.16, cy + radius * 0.1);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Outer ring, in the theme foreground so it frames cleanly on either theme.
+  ctx.strokeStyle = resolveColor("var(--vscode-foreground)");
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
 /* ---- GPS map background (OpenStreetMap raster tiles) --------------------
  * Only drawn when the log's GPS is both present and trustworthy (at least
  * one sensor_gps/vehicle_gps_position sample with fix_type >= 3, a 3D fix
@@ -3001,6 +3142,47 @@ function fetchOptionalSeries(topic: TopicInfo | undefined, field: string): Promi
   return fetchSeriesAdHoc(topic.msgId, field).catch(() => undefined);
 }
 
+/** Roll/pitch (radians) precomputed from vehicle_attitude's quaternion, on
+ *  that topic's own timeline — drives the artificial-horizon instrument. Yaw
+ *  is deliberately excluded: it's the compass's job, already fed by
+ *  vehicle_local_position.heading (the two agree to the decimal — the derived
+ *  yaw from this same quaternion was checked against heading on real logs). */
+interface ReplayAttitude {
+  times: Float64Array;
+  roll: Float64Array;
+  pitch: Float64Array;
+}
+
+/** Fetches vehicle_attitude's quaternion (q[0..3], PX4 order [w, x, y, z],
+ *  body-FRD→earth-NED) and reduces it to roll/pitch arrays via the standard
+ *  aerospace ZYX conversion. All four components share one timeline (same
+ *  message), so they're read together and folded once here rather than per
+ *  frame. Optional like the other HUD extras: undefined if the topic/fields
+ *  are absent or the fetch fails. */
+function fetchAttitude(topic: TopicInfo | undefined): Promise<ReplayAttitude | undefined> {
+  const components = ["q[0]", "q[1]", "q[2]", "q[3]"];
+  if (!topic || !components.every((c) => topic.fields.some((f) => f.name === c))) {
+    return Promise.resolve(undefined);
+  }
+  return Promise.all(components.map((c) => fetchSeriesAdHoc(topic.msgId, c)))
+    .then(([q0, q1, q2, q3]) => {
+      const times = q0!.times;
+      const n = times.length;
+      const roll = new Float64Array(n);
+      const pitch = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const w = q0!.values[i]!;
+        const x = q1!.values[i]!;
+        const y = q2!.values[i]!;
+        const z = q3!.values[i]!;
+        roll[i] = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
+        pitch[i] = Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x))));
+      }
+      return { times, roll, pitch };
+    })
+    .catch(() => undefined);
+}
+
 /** PX4's vehicle_status.msg NAVIGATION_STATE_* enum, current firmware as of
  *  this writing — cross-checked against a real log's actual transitions
  *  (POSCTL -> AUTO_TAKEOFF -> AUTO_LOITER -> AUTO_RTL -> AUTO_LOITER, a
@@ -3099,6 +3281,10 @@ function drawMarker(
   size: number,
   color: string,
   label?: string,
+  /** Which stacked label position to use (see the placement below) — 0 is the
+   *  default single-label slot; coincident markers pass 1, 2, … so their
+   *  labels step apart instead of printing on top of each other. */
+  labelSlot = 0,
 ): void {
   ctx.beginPath();
   if (shape === "diamond") {
@@ -3113,13 +3299,28 @@ function drawMarker(
   ctx.fillStyle = color;
   ctx.fill();
   if (label) {
+    // Centered just above the marker rather than to its right: a right-side
+    // label sat directly on the planned/traversed path segments that run
+    // through the waypoint, whereas floating it above the marker keeps it
+    // clear of them (the marker point itself is where the paths cross). The
+    // dark halo keeps it legible over the map wherever it lands.
+    //
+    // Slot 0 sits above the marker; slot 1 below; each further pair steps out
+    // by another line — so stacked labels for markers sharing a point (Home
+    // and a waypoint 1 on top of it, say) all stay visible.
+    const above = labelSlot % 2 === 0;
+    const gap = size + 3 + Math.floor(labelSlot / 2) * 13;
+    const labelY = above ? y - gap : y + gap;
+    ctx.save();
     ctx.font = "11px sans-serif";
-    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.textBaseline = above ? "bottom" : "top";
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
-    ctx.strokeText(label, x + size + 3, y);
+    ctx.strokeText(label, x, labelY);
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(label, x + size + 3, y);
+    ctx.fillText(label, x, labelY);
+    ctx.restore();
   }
 }
 
@@ -3148,6 +3349,16 @@ interface ReplaySceneData {
   home: { x: number; y: number } | undefined;
   waypoints: ReplayWaypoint[];
   gpsData: ReplayGpsData | undefined;
+  attitude: ReplayAttitude | undefined;
+  /** vehicle_local_position velocity (NED, m/s) — same timeline as xs/ys, so
+   *  indexed directly. Ground speed is hypot(vx, vy); climb rate is -vz. */
+  vx: Float64Array | undefined;
+  vy: Float64Array | undefined;
+  vz: Float64Array | undefined;
+  /** battery_status readings (own timeline). remaining is a 0..1 fraction. */
+  batteryRemaining: TimeSeries | undefined;
+  batteryVoltage: TimeSeries | undefined;
+  batteryCurrent: TimeSeries | undefined;
 }
 
 function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
@@ -3169,6 +3380,13 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     home,
     waypoints,
     gpsData,
+    attitude,
+    vx,
+    vy,
+    vz,
+    batteryRemaining,
+    batteryVoltage,
+    batteryCurrent,
   } = data;
 
   if (times.length === 0) {
@@ -3226,20 +3444,57 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     armTrimBtn.addEventListener("click", () => {
       armTrimmed = !armTrimmed;
       armTrimBtn.classList.toggle("active", armTrimmed);
+      // Read the position *before* moving slider.min: setting min above the
+      // current value makes the browser re-clamp slider.value immediately,
+      // so a later `slider.value < armIndex` test would wrongly read false.
+      // Trimming on snaps up to the arm point (but keeps a later position the
+      // user already scrubbed to); trimming off leaves the position as-is.
+      // Always calling updateDisplay refreshes the time/clock labels and the
+      // canvas — the old code skipped that whenever the value was clamped,
+      // which left the labels stale until the next manual slider nudge.
+      const currentIndex = Number(slider.value);
       slider.min = armTrimmed ? String(armIndex) : "0";
-      // Only jump if the current position would otherwise be below the new
-      // min (the slider's own value can't go there anyway) — re-enabling
-      // after the user has already scrubbed past the arm point shouldn't
-      // throw away where they were.
-      if (armTrimmed && Number(slider.value) < armIndex) {
-        updateDisplay(armIndex);
-      }
+      updateDisplay(armTrimmed ? Math.max(currentIndex, armIndex) : currentIndex);
     });
     toolbar.appendChild(armTrimBtn);
   }
   toolbar.appendChild(slider);
   const timeLabel = el("span", "replay-time-label", formatTimeTick(times[0]!, 1));
   toolbar.appendChild(timeLabel);
+
+  // Wall-clock (GPS-UTC-derived) time of the current frame — shown only when
+  // this log has a UTC reference, with the same user-selectable timezone as
+  // the Data and Messages tabs (shared state.timezone, so a zone picked in
+  // any of them applies everywhere). A clock glyph marks it as a real
+  // time-of-day, distinct from the elapsed-time label beside it.
+  let clockValueEl: HTMLElement | undefined;
+  if (state.summary?.utcOffsetUsec != undefined) {
+    const clockLabel = el("span", "replay-clock-label");
+    clockLabel.title = "Wall-clock time of the current frame (from this log's GPS), in the timezone at right";
+    const clockIcon = el("span", "replay-clock-icon");
+    clockIcon.innerHTML = ICON_CLOCK;
+    clockLabel.appendChild(clockIcon);
+    clockValueEl = el("span", "replay-clock-value", formatWallClock(times[0]!, 1));
+    clockLabel.appendChild(clockValueEl);
+    toolbar.appendChild(clockLabel);
+    const tzField = el("label", "timezone-field");
+    tzField.title = "Timezone for the replay clock — shared with the Data and Messages tabs";
+    tzField.appendChild(el("span", "timezone-field-label", "TZ:"));
+    const tzSelect = el("select", "timezone-select") as HTMLSelectElement;
+    for (const tz of listTimeZones()) {
+      const option = el("option", undefined, tz) as HTMLOptionElement;
+      option.value = tz;
+      tzSelect.appendChild(option);
+    }
+    tzSelect.value = state.timezone;
+    tzSelect.addEventListener("change", () => {
+      state.timezone = tzSelect.value;
+      updateDisplay(Number(slider.value));
+    });
+    tzField.appendChild(tzSelect);
+    toolbar.appendChild(tzField);
+  }
+
   toolbar.appendChild(el("span", undefined, "scroll to zoom · drag to pan · double-click to reset"));
   pane.appendChild(toolbar);
 
@@ -3256,31 +3511,63 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   const landedChip = el("span", "badge replay-landed-badge", "ON GROUND");
   const modeChip = el("span", "badge replay-mode-badge");
 
-  // One label/value pair per altitude source that's actually available —
-  // a small aligned grid reads much better than one long joined string,
-  // and only the value cell's text changes per frame (the label is fixed).
-  const altGrid = el("div", "replay-alt-grid");
-  const addAltRow = (label: string): HTMLElement => {
-    altGrid.appendChild(el("span", "replay-alt-key", label));
-    const valueEl = el("span", "replay-alt-val", "—");
-    altGrid.appendChild(valueEl);
-    return valueEl;
+  // A small aligned label/value grid reads much better than one long joined
+  // string, and only the value cell's text changes per frame. Each metric
+  // group (altitudes, speeds, battery) is its own such grid so the columns
+  // align within a group; a row is added only if the log has that source.
+  const makeKvGrid = () => {
+    const grid = el("div", "replay-alt-grid");
+    const add = (label: string): HTMLElement => {
+      grid.appendChild(el("span", "replay-alt-key", label));
+      const valueEl = el("span", "replay-alt-val", "—");
+      grid.appendChild(valueEl);
+      return valueEl;
+    };
+    return { grid, add };
   };
-  const relValueEl = altitudesDown ? addAltRow("Rel") : undefined;
-  const mslValueEl = altitudesDown && refAlt ? addAltRow("MSL") : undefined;
-  const gpsAltValueEl = gpsAlt ? addAltRow("GPS") : undefined;
-  const aglValueEl = distBottom && distBottomValid ? addAltRow("AGL") : undefined;
-  const baroValueEl = baroAlt ? addAltRow("Baro") : undefined;
+
+  const alt = makeKvGrid();
+  const relValueEl = altitudesDown ? alt.add("Rel") : undefined;
+  const mslValueEl = altitudesDown && refAlt ? alt.add("MSL") : undefined;
+  const gpsAltValueEl = gpsAlt ? alt.add("GPS") : undefined;
+  const aglValueEl = distBottom && distBottomValid ? alt.add("AGL") : undefined;
+  const baroValueEl = baroAlt ? alt.add("Baro") : undefined;
+
+  // Ground speed (horizontal, works even without an airspeed sensor) and
+  // climb rate (vertical) — both derived from the local-position velocity.
+  const speed = makeKvGrid();
+  const groundSpeedValueEl = vx && vy ? speed.add("GS") : undefined;
+  const climbValueEl = vz ? speed.add("Climb") : undefined;
+
+  // Battery — remaining %, pack voltage, and current draw, whichever exist.
+  const batt = makeKvGrid();
+  const batteryRemainingEl = batteryRemaining ? batt.add("Batt") : undefined;
+  const batteryVoltageEl = batteryVoltage ? batt.add("Volt") : undefined;
+  const batteryCurrentEl = batteryCurrent ? batt.add("Curr") : undefined;
 
   // Airspeed gets its own larger, bolder readout rather than blending into
   // the small print — the one number here that's often safety-relevant.
   const airspeedValueEl = el("span", "replay-airspeed-value", "—");
 
-  // Two visually separate boxes — vehicle state (armed/landed/mode) is a
-  // different kind of thing from telemetry readings (altitude/airspeed),
-  // so they don't share one box even though both live in the same corner.
+  // Each kind of information gets its own small titled card, stacked in the
+  // top-left corner — vehicle state, altitude, speed and power read as
+  // separate things at a glance instead of merging into one dense block.
   const hudLeft = el("div", "replay-hud-left");
+  const addCard = (title: string | undefined, children: HTMLElement[]): void => {
+    if (children.length === 0) {
+      return;
+    }
+    const card = el("div", "replay-card");
+    if (title) {
+      card.appendChild(el("div", "replay-card-title", title));
+    }
+    for (const child of children) {
+      card.appendChild(child);
+    }
+    hudLeft.appendChild(card);
+  };
 
+  // Vehicle state — the chips are self-labeling, so this card has no title.
   const stateRow = el("div", "replay-status-row");
   if (armed) {
     stateRow.appendChild(armedChip);
@@ -3291,30 +3578,24 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   if (navState) {
     stateRow.appendChild(modeChip);
   }
-  if (stateRow.children.length > 0) {
-    const statusBox = el("div", "replay-status");
-    statusBox.appendChild(stateRow);
-    hudLeft.appendChild(statusBox);
-  }
+  addCard(undefined, stateRow.children.length > 0 ? [stateRow] : []);
 
-  const telemetryRows: HTMLElement[] = [];
-  if (altGrid.children.length > 0) {
-    telemetryRows.push(altGrid);
+  addCard("Altitude", alt.grid.children.length > 0 ? [alt.grid] : []);
+
+  const speedChildren: HTMLElement[] = [];
+  if (speed.grid.children.length > 0) {
+    speedChildren.push(speed.grid);
   }
   if (airspeed) {
     const airspeedRow = el("div", "replay-status-row replay-airspeed-row");
     airspeedRow.appendChild(el("span", "replay-airspeed-key", "Airspeed"));
     airspeedRow.appendChild(airspeedValueEl);
     airspeedRow.appendChild(el("span", "replay-airspeed-unit", "m/s"));
-    telemetryRows.push(airspeedRow);
+    speedChildren.push(airspeedRow);
   }
-  if (telemetryRows.length > 0) {
-    const telemetryBox = el("div", "replay-telemetry");
-    for (const row of telemetryRows) {
-      telemetryBox.appendChild(row);
-    }
-    hudLeft.appendChild(telemetryBox);
-  }
+  addCard("Speed", speedChildren);
+
+  addCard("Battery", batt.grid.children.length > 0 ? [batt.grid] : []);
 
   if (hudLeft.children.length > 0) {
     canvasWrap.appendChild(hudLeft);
@@ -3332,6 +3613,31 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     compassNeedle = el("div", "replay-compass-needle");
     compass.appendChild(compassNeedle);
     canvasWrap.appendChild(compass);
+  }
+
+  // Artificial horizon (roll + pitch) — bottom-left, the free corner, with a
+  // compact numeric roll/pitch readout beneath it. Only present when the log
+  // has vehicle_attitude; redrawn per frame alongside the map.
+  let attitudeCanvas: HTMLCanvasElement | undefined;
+  let rollValueEl: HTMLElement | undefined;
+  let pitchValueEl: HTMLElement | undefined;
+  if (attitude) {
+    const attitudeBox = el("div", "replay-attitude");
+    attitudeCanvas = el("canvas", "replay-attitude-canvas") as HTMLCanvasElement;
+    attitudeBox.appendChild(attitudeCanvas);
+    const readout = el("div", "replay-attitude-readout");
+    const rollCell = el("span", "replay-attitude-cell");
+    rollCell.appendChild(el("span", "replay-attitude-key", "R"));
+    rollValueEl = el("span", "replay-attitude-val", "—");
+    rollCell.appendChild(rollValueEl);
+    const pitchCell = el("span", "replay-attitude-cell");
+    pitchCell.appendChild(el("span", "replay-attitude-key", "P"));
+    pitchValueEl = el("span", "replay-attitude-val", "—");
+    pitchCell.appendChild(pitchValueEl);
+    readout.appendChild(rollCell);
+    readout.appendChild(pitchCell);
+    attitudeBox.appendChild(readout);
+    canvasWrap.appendChild(attitudeBox);
   }
 
   pane.appendChild(canvasWrap);
@@ -3478,9 +3784,27 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     // Static markers — home, and (map mode only, since position_setpoint
     // has no local-frame equivalent to fall back to) waypoints — drawn
     // under the vehicle icon but over the path.
+    //
+    // Markers that land on (nearly) the same screen point — most commonly a
+    // mission whose waypoint 1 sits right on Home — would otherwise print
+    // their labels on top of each other. Hand each label the next free stack
+    // slot for its cluster so they step apart (first above, next below, …).
+    const placedLabels: { x: number; y: number; slot: number }[] = [];
+    const nextLabelSlot = (x: number, y: number): number => {
+      let maxSlot = -1;
+      for (const placed of placedLabels) {
+        if (Math.hypot(placed.x - x, placed.y - y) < 14) {
+          maxSlot = Math.max(maxSlot, placed.slot);
+        }
+      }
+      const slot = maxSlot + 1;
+      placedLabels.push({ x, y, slot });
+      return slot;
+    };
+
     if (home) {
       const [hx, hy] = toScreen(home.x, home.y);
-      drawMarker(ctx, hx, hy, "diamond", 6, resolveColor("var(--ulog-series-4)"), "Home");
+      drawMarker(ctx, hx, hy, "diamond", 6, resolveColor("var(--ulog-series-4)"), "Home", nextLabelSlot(hx, hy));
     }
     const mt = mapTransform;
     if (mt) {
@@ -3504,16 +3828,16 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
           ctx.stroke();
           ctx.setLineDash([]);
         }
-        drawMarker(ctx, wx, wy, "circle", 5, waypointColor, String(i + 1));
+        drawMarker(ctx, wx, wy, "circle", 5, waypointColor, String(i + 1), nextLabelSlot(wx, wy));
       });
     }
 
     // Current position — a third, even more distinct color so it doesn't
     // blend into the traversed trail right behind it.
     if (Number.isFinite(xs[clampedIndex]!) && Number.isFinite(ys[clampedIndex]!)) {
-      const [vx, vy] = toScreen(xs[clampedIndex]!, ys[clampedIndex]!);
+      const [screenX, screenY] = toScreen(xs[clampedIndex]!, ys[clampedIndex]!);
       const heading = headings?.[clampedIndex];
-      drawVehicleIcon(ctx, vx, vy, heading, VEHICLE_ICON_PX, resolveColor("var(--ulog-series-8)"));
+      drawVehicleIcon(ctx, screenX, screenY, heading, VEHICLE_ICON_PX, resolveColor("var(--ulog-series-8)"));
     }
 
     // HUD text — armed/landed/mode/airspeed and two of the altitude
@@ -3546,6 +3870,28 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
       baroValueEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
     }
 
+    if (groundSpeedValueEl && vx && vy) {
+      const gs = Math.hypot(vx[clampedIndex]!, vy[clampedIndex]!);
+      groundSpeedValueEl.textContent = Number.isFinite(gs) ? `${gs.toFixed(1)} m/s` : "—";
+    }
+    if (climbValueEl && vz) {
+      const climb = -vz[clampedIndex]!; // NED down-positive → up-positive climb
+      climbValueEl.textContent = Number.isFinite(climb) ? `${climb >= 0 ? "+" : ""}${climb.toFixed(1)} m/s` : "—";
+    }
+
+    if (batteryRemainingEl && batteryRemaining) {
+      const v = atOrBefore(batteryRemaining);
+      batteryRemainingEl.textContent = Number.isFinite(v) ? `${Math.round(v * 100)} %` : "—";
+    }
+    if (batteryVoltageEl && batteryVoltage) {
+      const v = atOrBefore(batteryVoltage);
+      batteryVoltageEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} V` : "—";
+    }
+    if (batteryCurrentEl && batteryCurrent) {
+      const v = atOrBefore(batteryCurrent);
+      batteryCurrentEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} A` : "—";
+    }
+
     if (airspeed) {
       const v = atOrBefore(airspeed);
       airspeedValueEl.textContent = Number.isFinite(v) ? v.toFixed(1) : "—";
@@ -3555,6 +3901,26 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
       const heading = headings[clampedIndex];
       if (Number.isFinite(heading)) {
         compassNeedle.style.transform = `translate(-50%, -100%) rotate(${(heading! * 180) / Math.PI}deg)`;
+      }
+    }
+
+    if (attitudeCanvas && attitude) {
+      const ai = findIndexAtOrBefore(attitude.times, times[clampedIndex]!);
+      const roll = attitude.roll[ai]!;
+      const pitch = attitude.pitch[ai]!;
+      drawAttitudeIndicator(attitudeCanvas, roll, pitch);
+      const fmtDeg = (rad: number): string => {
+        if (!Number.isFinite(rad)) {
+          return "—";
+        }
+        const deg = Math.round((rad * 180) / Math.PI);
+        return `${deg > 0 ? "+" : ""}${deg}°`;
+      };
+      if (rollValueEl) {
+        rollValueEl.textContent = fmtDeg(roll);
+      }
+      if (pitchValueEl) {
+        pitchValueEl.textContent = fmtDeg(pitch);
       }
     }
 
@@ -3636,6 +4002,9 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     const clamped = Math.max(Number(slider.min), Math.min(times.length - 1, index));
     slider.value = String(clamped);
     timeLabel.textContent = formatTimeTick(times[clamped]!, 1);
+    if (clockValueEl) {
+      clockValueEl.textContent = formatWallClock(times[clamped]!, 1);
+    }
     draw(clamped);
   };
 
@@ -3693,6 +4062,9 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   slider.addEventListener("input", () => {
     const index = Number(slider.value);
     timeLabel.textContent = formatTimeTick(times[index]!, 1);
+    if (clockValueEl) {
+      clockValueEl.textContent = formatWallClock(times[index]!, 1);
+    }
     draw(index);
     if (isPlaying) {
       reanchor(index);
@@ -3727,6 +4099,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
   }
   const hasHeading = hasField("heading");
   const hasZ = hasField("z");
+  const hasVelocity = hasField("vx") && hasField("vy") && hasField("vz");
   const hasRefAlt = hasField("ref_alt");
   const hasDistBottom = hasField("dist_bottom") && hasField("dist_bottom_valid");
   const hasGpsAnchorFields = hasField("ref_lat") && hasField("ref_lon") && hasField("xy_global");
@@ -3740,6 +4113,8 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
   const airspeedTopic = findTopic(summary, "airspeed_validated", "airspeed");
   const statusTopic = findTopic(summary, "vehicle_status");
   const airDataTopic = findTopic(summary, "vehicle_air_data");
+  const attitudeTopic = findTopic(summary, "vehicle_attitude");
+  const batteryTopic = findTopic(summary, "battery_status");
 
   const homeTopic = findTopic(summary, "home_position");
   const hasHomeLocal =
@@ -3772,6 +4147,9 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
     fetchSeriesAdHoc(topic.msgId, "y"),
     hasHeading ? fetchSeriesAdHoc(topic.msgId, "heading") : Promise.resolve(undefined),
     hasZ ? fetchSeriesAdHoc(topic.msgId, "z") : Promise.resolve(undefined),
+    hasVelocity ? fetchSeriesAdHoc(topic.msgId, "vx") : Promise.resolve(undefined),
+    hasVelocity ? fetchSeriesAdHoc(topic.msgId, "vy") : Promise.resolve(undefined),
+    hasVelocity ? fetchSeriesAdHoc(topic.msgId, "vz") : Promise.resolve(undefined),
     hasRefAlt ? fetchSeriesAdHoc(topic.msgId, "ref_alt") : Promise.resolve(undefined),
     hasDistBottom ? fetchSeriesAdHoc(topic.msgId, "dist_bottom") : Promise.resolve(undefined),
     hasDistBottom ? fetchSeriesAdHoc(topic.msgId, "dist_bottom_valid") : Promise.resolve(undefined),
@@ -3784,6 +4162,10 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
     fetchOptionalSeries(statusTopic, "nav_state"),
     fetchOptionalSeries(airDataTopic, "baro_alt_meter"),
     fetchOptionalSeries(gpsTopic, "altitude_msl_m"),
+    fetchAttitude(attitudeTopic),
+    fetchOptionalSeries(batteryTopic, "remaining"),
+    fetchOptionalSeries(batteryTopic, "voltage_v"),
+    fetchOptionalSeries(batteryTopic, "current_a"),
     hasHomeLocal
       ? Promise.all([
           fetchSeriesAdHoc(homeTopic!.msgId, "x"),
@@ -3831,6 +4213,9 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
         ySeries,
         headingSeries,
         zSeries,
+        vxSeries,
+        vySeries,
+        vzSeries,
         refAltSeries,
         distBottomSeries,
         distBottomValidSeries,
@@ -3840,6 +4225,10 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
         navState,
         baroAlt,
         gpsAlt,
+        attitude,
+        batteryRemaining,
+        batteryVoltage,
+        batteryCurrent,
         home,
         waypoints,
         gpsData,
@@ -3863,6 +4252,13 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
           home,
           waypoints,
           gpsData,
+          attitude,
+          vx: vxSeries?.values,
+          vy: vySeries?.values,
+          vz: vzSeries?.values,
+          batteryRemaining,
+          batteryVoltage,
+          batteryCurrent,
         });
       },
     )
