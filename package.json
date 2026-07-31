@@ -5,6 +5,10 @@
   "version": "0.0.4",
   "publisher": "anilkir",
   "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anilkir/vscode-ulog-viewer.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
