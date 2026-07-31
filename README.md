@@ -18,16 +18,23 @@ open a log from anywhere on disk.
 
 The viewer provides the following sections:
 
-- **Plots** — browse logged topics and select numeric fields to chart them.
+- **Data**: browse logged topics and select numeric fields to chart them.
   Add plot panels to compare signals; their time axes stay synchronized.
   Drag to zoom, double-click a chart, or select **Reset zoom** to restore the
   full time range.
-- **Info** — review log metadata, duration, software and hardware versions,
+- **Replay**: replay the flight trajectory from a log on a 2D top-down map
+  with HUD overlay showing critical flight data.
+- **Info**: review log metadata, duration, software and hardware versions,
   and information entries recorded by the vehicle.
-- **Parameters** — search logged parameters and inspect any values that
+- **Parameters**: search logged parameters and inspect any values that
   changed during flight, including their timestamped history.
-- **Messages** — view the onboard log console, including `PX4_INFO`,
+- **Messages**: view the onboard log console, including `PX4_INFO`,
   `PX4_WARN`, and `PX4_ERR` messages.
+- **Structure**: inspect the raw ULog file internals like file layout and
+  section sizes, compatibility flags, message-type and log-level counts, all
+  format definitions, every logged subscription, and any dropout events.
+
+
 
 ## Supported files
 
