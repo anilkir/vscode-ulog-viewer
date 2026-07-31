@@ -27,11 +27,13 @@ export interface TopicColumns {
 
 /**
  * Expand a subscription's definition into flat, plottable field names.
- * Nested structs (e.g. position_setpoint_triplet's `current`/`previous`/
- * `next`, each a `position_setpoint`) get exactly one level of flattening —
- * `current.lat`, `current.lon`, etc — since that's the only depth any
- * feature here actually needs; a nested field that's itself complex, or a
- * complex array, is left alone rather than generalizing further.
+ * Nested structs get exactly one level of flattening: a single nested
+ * struct (e.g. position_setpoint_triplet's `current`, a `position_setpoint`)
+ * becomes `current.lat`, `current.lon`, …, and a nested struct *array*
+ * (e.g. esc_status's `esc_report[8] esc`) becomes `esc[0].esc_rpm`,
+ * `esc[1].esc_rpm`, … per instance. A nested field that's itself complex is
+ * left alone rather than generalizing to arbitrary depth, since one level is
+ * the only depth any real PX4 topic needs.
  */
 export function plottableFields(subscription: Subscription, definitions: Map<string, MessageDefinition>): FieldInfo[] {
   const fields: FieldInfo[] = [];
@@ -41,23 +43,28 @@ export function plottableFields(subscription: Subscription, definitions: Map<str
       continue;
     }
     if (field.isComplex) {
-      if (field.arrayLength != undefined) {
-        continue;
-      }
       const nestedDef = definitions.get(field.type);
       if (!nestedDef) {
         continue;
       }
-      for (const inner of nestedDef.fields) {
-        if (inner.name.startsWith("_") || inner.isComplex || inner.type === "char" || inner.name === "timestamp") {
-          continue;
-        }
-        if (inner.arrayLength != undefined) {
-          for (let i = 0; i < inner.arrayLength; i++) {
-            fields.push({ name: `${field.name}.${inner.name}[${i}]`, type: inner.type });
+      const instanceCount = field.arrayLength ?? 1;
+      for (let instance = 0; instance < instanceCount; instance++) {
+        const prefix = field.arrayLength != undefined ? `${field.name}[${instance}]` : field.name;
+        for (const inner of nestedDef.fields) {
+          // Unlike the top-level `timestamp` (the x-axis, skipped above), a
+          // nested struct's own timestamp is real data — e.g. each
+          // esc_report's last-telemetry-update time, whose flat segments
+          // expose a per-ESC dropout — so it stays plottable.
+          if (inner.name.startsWith("_") || inner.isComplex || inner.type === "char") {
+            continue;
           }
-        } else {
-          fields.push({ name: `${field.name}.${inner.name}`, type: inner.type });
+          if (inner.arrayLength != undefined) {
+            for (let i = 0; i < inner.arrayLength; i++) {
+              fields.push({ name: `${prefix}.${inner.name}[${i}]`, type: inner.type });
+            }
+          } else {
+            fields.push({ name: `${prefix}.${inner.name}`, type: inner.type });
+          }
         }
       }
       continue;

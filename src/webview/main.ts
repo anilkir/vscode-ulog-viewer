@@ -2,6 +2,7 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import type {
+  FieldInfo,
   HostToWebviewMessage,
   LogMessageInfo,
   LogSummary,
@@ -209,6 +210,10 @@ interface AppState {
   /** msgIds whose string values have been requested and not yet returned. */
   pendingStrings: Set<number>;
   expandedTopics: Set<number>;
+  /** Expanded struct-array instance groups in the topic sidebar (e.g.
+   *  esc_status's `esc[3]`), keyed `${msgId}:${instancePrefix}` — the
+   *  per-group analogue of `expandedTopics`. */
+  expandedFieldGroups: Set<string>;
   topicFilter: string;
   parameterFilter: string;
   parameterQuickFilter: ParameterQuickFilter;
@@ -247,6 +252,7 @@ const state: AppState = {
   stringsCache: new Map(),
   pendingStrings: new Set(),
   expandedTopics: new Set(),
+  expandedFieldGroups: new Set(),
   topicFilter: "",
   parameterFilter: "",
   parameterQuickFilter: "all",
@@ -2340,15 +2346,67 @@ function renderTopicList(): void {
       }
     });
 
-    const fieldList = el("div", "field-list");
-    for (const field of matchingFields) {
+    const makeFieldButton = (field: FieldInfo, label: string): HTMLElement => {
       const button = el("button", "field-btn");
       button.dataset.msgId = String(topic.msgId);
       button.dataset.field = field.name;
-      button.appendChild(el("span", undefined, field.name));
+      button.appendChild(el("span", undefined, label));
       button.appendChild(el("span", "field-type", field.type));
       button.addEventListener("click", () => toggleField(topic, field.name));
-      fieldList.appendChild(button);
+      return button;
+    };
+
+    // Struct-array instance fields (`esc[0].esc_rpm`, see plottableFields in
+    // ulogData.ts) fold into one collapsible group per instance; everything
+    // else renders as a flat button like before. Groups keep the position of
+    // their first field so the sidebar order still mirrors the definition.
+    const fieldList = el("div", "field-list");
+    const instanceGroups = new Map<string, FieldInfo[]>();
+    const renderOrder: (FieldInfo | string)[] = [];
+    for (const field of matchingFields) {
+      const instancePrefix = /^(.+\[\d+\])\./.exec(field.name)?.[1];
+      if (instancePrefix != undefined) {
+        let group = instanceGroups.get(instancePrefix);
+        if (!group) {
+          group = [];
+          instanceGroups.set(instancePrefix, group);
+          renderOrder.push(instancePrefix);
+        }
+        group.push(field);
+      } else {
+        renderOrder.push(field);
+      }
+    }
+    for (const entry of renderOrder) {
+      if (typeof entry !== "string") {
+        fieldList.appendChild(makeFieldButton(entry, entry.name));
+        continue;
+      }
+      const group = instanceGroups.get(entry) ?? [];
+      const groupKey = `${topic.msgId}:${entry}`;
+      const groupDetails = el("details", "field-group");
+      // A filter that matched these fields should show them, not hide them
+      // behind a closed drop-down — mirrors the topic-level rule above.
+      groupDetails.open = filter !== "" && !topicMatches ? true : state.expandedFieldGroups.has(groupKey);
+      const groupSummary = el("summary");
+      groupSummary.appendChild(el("span", undefined, entry));
+      groupSummary.appendChild(el("span", "topic-count", `(${group.length})`));
+      groupDetails.appendChild(groupSummary);
+      groupDetails.addEventListener("toggle", () => {
+        if (state.topicFilter.trim() === "") {
+          if (groupDetails.open) {
+            state.expandedFieldGroups.add(groupKey);
+          } else {
+            state.expandedFieldGroups.delete(groupKey);
+          }
+        }
+      });
+      const groupList = el("div", "field-list");
+      for (const field of group) {
+        groupList.appendChild(makeFieldButton(field, field.name.slice(entry.length + 1)));
+      }
+      groupDetails.appendChild(groupList);
+      fieldList.appendChild(groupDetails);
     }
     if (matchingFields.length === 0 && matchingStrings.length === 0) {
       fieldList.appendChild(el("div", "field-type", "no plottable fields"));

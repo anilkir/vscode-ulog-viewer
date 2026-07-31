@@ -730,33 +730,42 @@ export async function scanTopicColumns(
       if (field.type === "uint64_t") {
         timestampOffset = curOffset;
       }
-    } else if (field.isComplex && field.arrayLength == undefined) {
-      // One level of struct flattening — see plottableFields()'s matching
-      // comment in ulogData.ts; keep the two in sync by hand.
+    } else if (field.isComplex) {
+      // One level of struct flattening, per array instance for struct
+      // arrays (`esc_report[8] esc` → `esc[0].…`, `esc[1].…`) — see
+      // plottableFields()'s matching comment in ulogData.ts; keep the two
+      // in sync by hand. `size` is the nested struct's per-element size,
+      // so instance N's fields start at curOffset + N * size.
       const nestedDef = scan.definitions.get(field.type);
       if (nestedDef) {
-        let innerOffset = 0;
-        for (const inner of nestedDef.fields) {
-          const innerSize = fieldSize(inner, scan.definitions);
-          if (!(inner.name.startsWith("_") || inner.isComplex || inner.type === "char" || inner.name === "timestamp")) {
-            const targets: ColumnTarget[] = [];
-            if (inner.arrayLength != undefined) {
-              for (let i = 0; i < inner.arrayLength; i++) {
+        const instanceCount = field.arrayLength ?? 1;
+        for (let instance = 0; instance < instanceCount; instance++) {
+          const prefix = field.arrayLength != undefined ? `${field.name}[${instance}]` : field.name;
+          let innerOffset = 0;
+          for (const inner of nestedDef.fields) {
+            const innerSize = fieldSize(inner, scan.definitions);
+            // Nested timestamps are plottable data (unlike the top-level
+            // x-axis timestamp) — see plottableFields() in ulogData.ts.
+            if (!(inner.name.startsWith("_") || inner.isComplex || inner.type === "char")) {
+              const targets: ColumnTarget[] = [];
+              if (inner.arrayLength != undefined) {
+                for (let i = 0; i < inner.arrayLength; i++) {
+                  const column = new Float64Array(capacity);
+                  columns.set(`${prefix}.${inner.name}[${i}]`, column);
+                  targets.push({ column, index: i });
+                }
+              } else {
                 const column = new Float64Array(capacity);
-                columns.set(`${field.name}.${inner.name}[${i}]`, column);
-                targets.push({ column, index: i });
+                columns.set(`${prefix}.${inner.name}`, column);
+                targets.push({ column });
               }
-            } else {
-              const column = new Float64Array(capacity);
-              columns.set(`${field.name}.${inner.name}`, column);
-              targets.push({ column });
+              fieldTasks.push({ byteOffset: curOffset + instance * size + innerOffset, field: inner, targets });
             }
-            fieldTasks.push({ byteOffset: curOffset + innerOffset, field: inner, targets });
+            innerOffset += innerSize * (inner.arrayLength ?? 1);
           }
-          innerOffset += innerSize * (inner.arrayLength ?? 1);
         }
       }
-    } else if (!(field.name.startsWith("_") || field.isComplex || field.type === "char")) {
+    } else if (!(field.name.startsWith("_") || field.type === "char")) {
       const targets: ColumnTarget[] = [];
       if (field.arrayLength != undefined) {
         for (let i = 0; i < field.arrayLength; i++) {

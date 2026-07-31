@@ -294,6 +294,25 @@ body.resizing-column {
   margin-left: 6px;
 }
 
+/* Collapsible per-instance group of a struct-array field (e.g. esc_status's
+   esc[0] … esc[7]), nested inside a topic's field list. */
+.field-group > summary {
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-group > summary:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.field-group > .field-list {
+  padding-left: 14px;
+}
+
 /* Read-only reconstructed char[N] string fields, shown under a topic below
    its plottable field buttons (see renderStringsInto in main.ts). */
 .string-field-list {
