@@ -115,6 +115,12 @@ const ICON_MARKER =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<path d="M4 14 V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
   '<path d="M4 2 H12 L9.3 4.5 L12 7 H4" fill="currentColor"/></svg>';
+/** ICON_MARKER's flag (nudged left to make room) with an × in the corner. */
+const ICON_MARKER_CLEAR =
+  '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+  '<path d="M3.5 14 V2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>' +
+  '<path d="M3.5 2 H10.5 L8.1 4.25 L10.5 6.5 H3.5" fill="currentColor"/>' +
+  '<path d="M9.8 10 L13.8 14 M13.8 10 L9.8 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 const ICON_PENCIL =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<path d="M11.5 2.5 L13.5 4.5 L5 13 L2.5 13.5 L3 11 Z" fill="none" stroke="currentColor" ' +
@@ -1036,6 +1042,16 @@ function updateMarkerVisual(panel: PlotPanel, marker: Marker): void {
 
 function removeMarker(id: number): void {
   state.markers = state.markers.filter((m) => m.id !== id);
+  renderAllMarkers();
+}
+
+/** No confirmation, same as "Clear all" for plots — markers are cheap to
+ *  re-place, and each one still has its own × for one-at-a-time removal. */
+function clearAllMarkers(): void {
+  if (state.markers.length === 0) {
+    return;
+  }
+  state.markers = [];
   renderAllMarkers();
 }
 
@@ -4513,6 +4529,7 @@ function buildPlotsPane(): HTMLElement {
   );
   viewToolbar.appendChild(timezoneField);
   viewToolbar.appendChild(makeIconButton(ICON_MARKER, "Add a draggable time marker, shown on every plot", addMarker));
+  viewToolbar.appendChild(makeIconButton(ICON_MARKER_CLEAR, "Remove all time markers", clearAllMarkers));
   viewToolbar.appendChild(
     makeIconToggleButton(
       ICON_ZERO,
