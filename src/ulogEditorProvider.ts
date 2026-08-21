@@ -310,6 +310,23 @@ export class UlogEditorProvider implements vscode.CustomReadonlyEditorProvider<U
             );
             document.logReadStats("  reads during scanUlogFile()");
             const summary = buildSummary(scan, fileName, fileSizeBytes);
+            // gps_dump's plottable fields (per-frame-type arrival-gap
+            // series) only exist after decoding its raw stream, so fill
+            // them in now — getTopicData caches the decoded columns, making
+            // the plot requests that follow effectively free. Failure just
+            // leaves the topic field-less; the summary still ships.
+            for (const topic of summary.topics) {
+              if (topic.messageName === "gps_dump" && topic.count > 0) {
+                try {
+                  const data = await logTimed(`gps_dump decode (msgId=${topic.msgId})`, () =>
+                    document.getTopicData(topic.msgId),
+                  );
+                  topic.fields = [...data.columns.keys()].map((name) => ({ name, type: "double" }));
+                } catch (err) {
+                  log(`gps_dump decode failed for msgId=${topic.msgId}: ${errorMessage(err)}`);
+                }
+              }
+            }
             log(`Total time from webview-ready to summary sent: ${Date.now() - tReadyStart}ms`);
             post({ type: "summary", summary });
             post({ type: "savedViews", views: getSavedViews(this.context.globalState) });

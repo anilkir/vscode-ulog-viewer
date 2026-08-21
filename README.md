@@ -22,7 +22,14 @@ The viewer provides the following sections:
   Add plot panels to compare signals; their time axes stay synchronized.
   Drag to zoom, double-click a chart, or select **Reset zoom** to restore the
   full time range. The **Topics** button in the plot toolbar collapses the
-  topic list to give the plots the full width.
+  topic list to give the plots the full width. If the log contains raw GNSS
+  communication (`gps_dump`, enabled with `GPS_DUMP_COMM`), it is decoded
+  into per-direction protocol message counts (UBX, RTCM3, NMEA, SBF) shown
+  under the topic, and each message type gets a plottable "gap" series —
+  seconds since that type's previous frame — for spotting periods where a
+  message stopped arriving. Message *contents* are not decoded; to inspect
+  them, extract the raw streams with pyulog's `ulog_extract_gps_dump` and
+  use a protocol tool such as u-blox u-center.
 - **Replay**: replay the flight trajectory from a log on a 2D top-down map
   with HUD overlay showing critical flight data.
 - **Info**: review log metadata, duration, software and hardware versions,

@@ -50,6 +50,7 @@ import {
   type Subscription,
 } from "@foxglove/ulog";
 import type { LogMessageInfo, StringRecord, TopicStrings } from "./protocol";
+import { decodeGpsDumpStreams, extractGpsDumpColumns, type GpsDumpFragment, type GpsDumpStream } from "./gpsDump";
 
 const US_PER_SEC = 1e6;
 const PROLOGUE_BYTES = 16; // 7-byte magic + 1-byte version + 8-byte file timestamp
@@ -1022,4 +1023,167 @@ export async function scanTopicStrings(
   }
 
   return { fieldNames, records: [...recordsByKey.values()], sampleCount, truncated };
+}
+
+/**
+ * Reconstructs the gps_dump topic's raw GNSS communication and summarizes it
+ * as protocol frame counts (see gpsDump.ts) — the special-case counterpart to
+ * `scanTopicStrings`, served through the same strings pipeline. gps_dump's
+ * payload is a fragment stream, not per-sample values: each Data message
+ * carries up to `data.length` bytes of whatever passed over the receiver's
+ * link, with `len`'s MSB giving the direction (set = sent to the device,
+ * clear = received) — the same convention pyulog's ulog_extract_gps_dump
+ * splits by. Fragments are concatenated per (receiver instance, direction),
+ * so protocol frames larger than one sample reassemble correctly, then the
+ * whole streams are frame-split and counted.
+ */
+export async function scanGpsDump(
+  filelike: Filelike,
+  scan: Pick<UlogFileScanResult, "subscriptions" | "definitions" | "dataMessageCounts" | "dataSectionStart" | "dataSectionEnd">,
+  msgId: number,
+): Promise<TopicStrings> {
+  const { streams, sampleCount } = await collectGpsDumpStreams(filelike, scan, msgId);
+  return decodeGpsDumpStreams(streams, sampleCount);
+}
+
+/**
+ * gps_dump's plottable columns: per-frame-type arrival-gap series (see
+ * extractGpsDumpColumns in gpsDump.ts) — the topic's raw numeric fields are
+ * stream plumbing, not telemetry, so this replaces scanTopicColumns for it
+ * entirely (extractTopicColumns in ulogData.ts does the routing). The
+ * column set is only known after decoding, so the editor provider fills the
+ * topic's summary fields from this result too.
+ */
+export async function scanGpsDumpColumns(
+  filelike: Filelike,
+  scan: Pick<UlogFileScanResult, "subscriptions" | "definitions" | "dataMessageCounts" | "dataSectionStart" | "dataSectionEnd">,
+  msgId: number,
+): Promise<TopicColumnsResult> {
+  const { streams } = await collectGpsDumpStreams(filelike, scan, msgId);
+  return extractGpsDumpColumns(streams);
+}
+
+async function collectGpsDumpStreams(
+  filelike: Filelike,
+  scan: Pick<UlogFileScanResult, "subscriptions" | "definitions" | "dataMessageCounts" | "dataSectionStart" | "dataSectionEnd">,
+  msgId: number,
+): Promise<{ streams: GpsDumpStream[]; sampleCount: number }> {
+  const subscription = scan.subscriptions.get(msgId);
+  if (!subscription) {
+    throw new Error(`Unknown topic id ${msgId}`);
+  }
+  const timestampOffset = computeFieldOffset(subscription, scan.definitions, "timestamp", "uint64_t");
+
+  // Locate the fields by name/type rather than assuming the exact layout —
+  // `instance` is a later addition (multi-receiver logging) that older logs
+  // simply don't have.
+  let lenOffset: number | undefined;
+  let dataOffset: number | undefined;
+  let dataLength: number | undefined;
+  let instanceOffset: number | undefined;
+  let curOffset = 0;
+  for (const field of subscription.fields) {
+    const size = fieldSize(field, scan.definitions);
+    if (field.type === "uint8_t") {
+      if (field.name === "len" && field.arrayLength == undefined) {
+        lenOffset = curOffset;
+      } else if (field.name === "data" && field.arrayLength != undefined) {
+        dataOffset = curOffset;
+        dataLength = field.arrayLength;
+      } else if (field.name === "instance" && field.arrayLength == undefined) {
+        instanceOffset = curOffset;
+      }
+    }
+    curOffset += size * (field.arrayLength ?? 1);
+  }
+  if (lenOffset == undefined || dataOffset == undefined || dataLength == undefined) {
+    return { streams: [], sampleCount: 0 };
+  }
+
+  // Fragment lists keyed per (instance, direction); byte counts kept so the
+  // final concatenation allocates each stream exactly once.
+  const fragments = new Map<
+    string,
+    { instance: number; toDevice: boolean; parts: Uint8Array[]; total: number; times: GpsDumpFragment[] }
+  >();
+  let sampleCount = 0;
+
+  const capacity = scan.dataMessageCounts.get(msgId) ?? 0;
+  if (capacity > 0) {
+    await filelike.open();
+    const fileSize = filelike.size();
+    const reader = new FastReader(filelike, fileSize, scan.dataSectionStart);
+    const dataEnd = Math.min(scan.dataSectionEnd, fileSize);
+
+    while (dataEnd - reader.position() >= 3 && sampleCount < capacity) {
+      if (!reader.hasAvailable(3)) {
+        await reader.ensure(3);
+      }
+      const size = reader.u16();
+      const type = reader.u8();
+      const bodyStart = reader.position();
+      const bodyEnd = bodyStart + size;
+      if (bodyEnd > dataEnd) {
+        break;
+      }
+      if (type === MessageType.Data) {
+        if (!reader.hasAvailable(size)) {
+          await reader.ensure(size);
+        }
+        const candidateMsgId = reader.u16();
+        if (candidateMsgId === msgId) {
+          const actualSize = size - 2;
+          if (lenOffset < actualSize) {
+            const view = reader.rawView();
+            const base = bodyStart + 2 - reader.bufferStart();
+            const rawLen = view.getUint8(base + lenOffset);
+            const toDevice = (rawLen & 0x80) !== 0;
+            const fragmentLen = Math.min(rawLen & 0x7f, dataLength, Math.max(0, actualSize - dataOffset));
+            const instance =
+              instanceOffset != undefined && instanceOffset < actualSize ? view.getUint8(base + instanceOffset) : 0;
+            if (fragmentLen > 0) {
+              const key = `${instance}:${toDevice ? "t" : "f"}`;
+              let entry = fragments.get(key);
+              if (!entry) {
+                entry = { instance, toDevice, parts: [], total: 0, times: [] };
+                fragments.set(key, entry);
+              }
+              const timeSec =
+                timestampOffset != undefined && timestampOffset + 8 <= actualSize
+                  ? Number(view.getBigUint64(base + timestampOffset, true)) / US_PER_SEC
+                  : 0;
+              entry.times.push({ offset: entry.total, timeSec });
+              // slice() copies — the reader's buffer is replaced wholesale on
+              // refill, but a Filelike is free to reuse its own read buffers.
+              const start = view.byteOffset + base + dataOffset;
+              entry.parts.push(new Uint8Array(view.buffer.slice(start, start + fragmentLen)));
+              entry.total += fragmentLen;
+            }
+          }
+          sampleCount++;
+        }
+      }
+      reader.seekTo(bodyEnd);
+    }
+  }
+
+  // Stable, readable stream order: by receiver, "from device" (the
+  // interesting direction) before "to device". Instances are only named when
+  // the log actually has more than one receiver dumping.
+  const entries = [...fragments.values()].sort(
+    (a, b) => a.instance - b.instance || Number(a.toDevice) - Number(b.toDevice),
+  );
+  const multiInstance = new Set(entries.map((e) => e.instance)).size > 1;
+  const streams: GpsDumpStream[] = entries.map((entry) => {
+    const bytes = new Uint8Array(entry.total);
+    let offset = 0;
+    for (const part of entry.parts) {
+      bytes.set(part, offset);
+      offset += part.byteLength;
+    }
+    const direction = entry.toDevice ? "to device" : "from device";
+    return { key: multiInstance ? `GPS ${entry.instance} · ${direction}` : direction, bytes, fragments: entry.times };
+  });
+
+  return { streams, sampleCount };
 }

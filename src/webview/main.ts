@@ -2312,7 +2312,12 @@ function renderStringsInto(section: HTMLElement, topic: TopicInfo, errorMessage?
   if (names.length === 0) {
     return;
   }
-  section.appendChild(el("div", "string-divider", "strings"));
+  // gps_dump's "strings" are decoded protocol summaries (see gpsDump.ts) —
+  // same pipeline and shape, different name and always the per-field view
+  // (one most-frequent-first frame list per direction; the device-grouping
+  // heuristic below has no meaning for it).
+  const isGpsDump = topic.messageName === "gps_dump";
+  section.appendChild(el("div", "string-divider", isGpsDump ? "gps protocol" : "strings"));
 
   if (errorMessage) {
     section.appendChild(el("div", "string-note", `Couldn't read values: ${errorMessage}`));
@@ -2337,11 +2342,25 @@ function renderStringsInto(section: HTMLElement, topic: TopicInfo, errorMessage?
   // Device view when the topic looks like an enumeration: it either has an
   // identity field, or few enough distinct records to be one device apiece.
   // A single-field or high-cardinality text topic isn't, so fall back.
-  const useRecordView = data.fieldNames.length >= 2 && (idFields.length > 0 || data.records.length <= MAX_RECORD_VIEW);
+  const useRecordView =
+    !isGpsDump && data.fieldNames.length >= 2 && (idFields.length > 0 || data.records.length <= MAX_RECORD_VIEW);
   if (useRecordView) {
     renderRecordView(section, data, idFields, shown);
   } else {
     renderPerFieldView(section, data, shown);
+  }
+
+  if (isGpsDump) {
+    section.appendChild(
+      el(
+        "div",
+        "string-note",
+        "Only message types and counts are decoded here. To inspect the messages' contents, extract the raw " +
+          "streams with pyulog's ulog_extract_gps_dump and open them in a protocol tool (e.g. u-blox u-center). " +
+          "This topic's plottable fields show each message type's arrival gaps — plot one to spot periods " +
+          "where it stopped arriving.",
+      ),
+    );
   }
 
   if (data.truncated) {

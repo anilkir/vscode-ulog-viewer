@@ -6,7 +6,7 @@
  * `ulog.open()`/`readMessages()` are never used at all.
  */
 import { MessageType, type FieldPrimitive, type Filelike, type MessageDefinition, type Subscription } from "@foxglove/ulog";
-import { scanTopicColumns, scanTopicStrings, type UlogFileScanResult } from "./paramScan";
+import { scanGpsDump, scanGpsDumpColumns, scanTopicColumns, scanTopicStrings, type UlogFileScanResult } from "./paramScan";
 import type {
   FieldInfo,
   FormatDefinitionInfo,
@@ -36,6 +36,14 @@ export interface TopicColumns {
  * the only depth any real PX4 topic needs.
  */
 export function plottableFields(subscription: Subscription, definitions: Map<string, MessageDefinition>): FieldInfo[] {
+  // gps_dump's numeric fields are raw-stream plumbing (len/instance/data
+  // bytes), not telemetry. Its real plottable fields — per-frame-type
+  // arrival-gap series — only exist after decoding the stream, so the
+  // editor provider fills them into the summary from scanGpsDumpColumns
+  // (which extractTopicColumns below also routes plot requests to).
+  if (subscription.name === "gps_dump") {
+    return [];
+  }
   const fields: FieldInfo[] = [];
   for (const field of subscription.fields) {
     // Skip padding, strings, and the x-axis timestamp itself.
@@ -88,6 +96,13 @@ export function plottableFields(subscription: Subscription, definitions: Map<str
  * own extraction scope (paramScan.ts) — keep the two in sync by hand.
  */
 export function stringFields(subscription: Subscription): StringFieldInfo[] {
+  // gps_dump carries no char fields, but its raw uint8 stream decodes into
+  // protocol summaries served through this same strings pipeline (see
+  // scanGpsDump in paramScan.ts) — one pseudo-field so the UI offers the
+  // section; the real field names come back with the fetched data.
+  if (subscription.name === "gps_dump") {
+    return [{ name: "protocol", length: 0 }];
+  }
   const fields: StringFieldInfo[] = [];
   for (const field of subscription.fields) {
     if (!field.name.startsWith("_") && field.type === "char" && field.arrayLength != undefined) {
@@ -99,18 +114,28 @@ export function stringFields(subscription: Subscription): StringFieldInfo[] {
 
 /**
  * Extract (and cache) all plottable columns for a topic, via the fast
- * low-level scan in paramScan.ts.
+ * low-level scan in paramScan.ts. gps_dump routes to its own decoder: its
+ * columns are per-frame-type arrival-gap series synthesized from the raw
+ * stream, not struct fields (see plottableFields above).
  */
 export function extractTopicColumns(filelike: Filelike, scan: UlogFileScanResult, msgId: number): Promise<TopicColumns> {
+  if (scan.subscriptions.get(msgId)?.name === "gps_dump") {
+    return scanGpsDumpColumns(filelike, scan, msgId);
+  }
   return scanTopicColumns(filelike, scan, msgId);
 }
 
 /**
  * Reconstruct (via the fast scan in paramScan.ts) the decoded values of a
  * topic's `char[N]` string fields — the non-plottable counterpart to
- * `extractTopicColumns` above.
+ * `extractTopicColumns` above. gps_dump routes to its own decoder: its
+ * payload is a raw GNSS byte stream, not char fields, but the decoded
+ * protocol summary comes back in the same TopicStrings shape.
  */
 export function extractTopicStrings(filelike: Filelike, scan: UlogFileScanResult, msgId: number): Promise<TopicStrings> {
+  if (scan.subscriptions.get(msgId)?.name === "gps_dump") {
+    return scanGpsDump(filelike, scan, msgId);
+  }
   return scanTopicStrings(filelike, scan, msgId);
 }
 
