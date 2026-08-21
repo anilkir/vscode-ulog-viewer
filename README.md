@@ -18,8 +18,10 @@ open a log from anywhere on disk.
 
 The viewer provides the following sections:
 
-- **Data**: browse logged topics and select numeric fields to chart them.
-  Add plot panels to compare signals; their time axes stay synchronized.
+- **Data**: browse logged topics and select numeric fields to chart them —
+  Shift+click a field to add every visible field between it and the last
+  one you clicked. Add plot panels to compare signals; their time axes stay
+  synchronized.
   Drag to zoom, double-click a chart, or select **Reset zoom** to restore the
   full time range. The **Topics** button in the plot toolbar collapses the
   topic list to give the plots the full width. If the log contains raw GNSS

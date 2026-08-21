@@ -1712,6 +1712,25 @@ function removeSeriesAt(panel: PlotPanel, index: number): void {
   refreshSaveViewArea();
 }
 
+/** The add half of toggleField: requests one field onto `panel`, unless it's
+ *  already plotted or in flight there (a no-op then, deliberately — batch
+ *  selection must never toggle existing series *off*). Returns false only
+ *  when the panel is at its series limit; callers surface that and refresh
+ *  the status/buttons themselves, so a batch of adds repaints once. */
+function requestFieldAdd(panel: PlotPanel, msgId: number, field: string): boolean {
+  const key = seriesKey(msgId, field);
+  if (state.pending.has(pendingKey(panel.id, msgId, field)) || panel.series.some((s) => s.key === key)) {
+    return true;
+  }
+  const pendingInPanel = [...state.pending].filter((k) => k.startsWith(`${panel.id}:`)).length;
+  if (panel.series.length + pendingInPanel >= MAX_SERIES_PER_PANEL) {
+    return false;
+  }
+  state.pending.add(pendingKey(panel.id, msgId, field));
+  vscode.postMessage({ type: "getSeries", msgId, field });
+  return true;
+}
+
 function toggleField(topic: TopicInfo, field: string): void {
   // Otherwise a stale "N series not found" message from a previous saved-
   // view load would resurface once this toggle's own request finishes and
@@ -1719,8 +1738,7 @@ function toggleField(topic: TopicInfo, field: string): void {
   stickyPlotStatus = "";
   const panel = state.panels.find((p) => p.id === state.focusedPanelId) ?? createPanel();
   const key = seriesKey(topic.msgId, field);
-  const pKey = pendingKey(panel.id, topic.msgId, field);
-  if (state.pending.has(pKey)) {
+  if (state.pending.has(pendingKey(panel.id, topic.msgId, field))) {
     return;
   }
   const existing = panel.series.findIndex((s) => s.key === key);
@@ -1728,15 +1746,12 @@ function toggleField(topic: TopicInfo, field: string): void {
     removeSeriesAt(panel, existing);
     return;
   }
-  const pendingInPanel = [...state.pending].filter((k) => k.startsWith(`${panel.id}:`)).length;
-  if (panel.series.length + pendingInPanel >= MAX_SERIES_PER_PANEL) {
+  if (!requestFieldAdd(panel, topic.msgId, field)) {
     setPlotStatus(`Plot limit of ${MAX_SERIES_PER_PANEL} series reached — remove one first.`);
     return;
   }
-  state.pending.add(pKey);
   updatePlotStatus();
   refreshFieldButtons();
-  vscode.postMessage({ type: "getSeries", msgId: topic.msgId, field });
 }
 
 /* ---------------------------------------------------------------------- */
@@ -2103,6 +2118,60 @@ function refreshFieldButtons(): void {
 /* Topic sidebar                                                           */
 /* ---------------------------------------------------------------------- */
 
+/** Anchor for shift-click range selection: the last plainly-clicked field
+ *  button, remembered by key rather than element — the sidebar's DOM is
+ *  rebuilt on every filter change, so the element wouldn't survive. */
+let fieldRangeAnchor: { msgId: number; field: string } | undefined;
+
+/** The field buttons currently visible in the sidebar, in display order.
+ *  Buttons inside collapsed topics/instance-groups don't render (details
+ *  content has no offsetParent), so a shift-click range only ever covers
+ *  what the user can actually see. */
+function visibleFieldButtons(): HTMLElement[] {
+  return [...topicListEl.querySelectorAll<HTMLElement>(".field-btn")].filter((b) => b.offsetParent !== null);
+}
+
+/**
+ * Shift+click batch selection: adds every visible field between the last
+ * plainly-clicked field (the anchor) and `target` — across topic boundaries
+ * if both are expanded, which combines well with the sidebar filter (filter
+ * to "esc rpm", click the first hit, shift+click the last). Add-only:
+ * fields in the range that are already plotted stay put instead of toggling
+ * off. Returns false when there's no usable anchor on screen, so the caller
+ * can fall back to a plain toggle.
+ */
+function selectFieldRange(target: HTMLElement): boolean {
+  const anchor = fieldRangeAnchor;
+  if (!anchor) {
+    return false;
+  }
+  const buttons = visibleFieldButtons();
+  const anchorIndex = buttons.findIndex(
+    (b) => Number(b.dataset.msgId) === anchor.msgId && b.dataset.field === anchor.field,
+  );
+  const targetIndex = buttons.indexOf(target);
+  if (anchorIndex < 0 || targetIndex < 0) {
+    return false;
+  }
+  stickyPlotStatus = "";
+  const panel = state.panels.find((p) => p.id === state.focusedPanelId) ?? createPanel();
+  const [lo, hi] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+  for (let i = lo; i <= hi; i++) {
+    const button = buttons[i]!;
+    const field = button.dataset.field;
+    if (field == undefined) {
+      continue;
+    }
+    if (!requestFieldAdd(panel, Number(button.dataset.msgId), field)) {
+      setPlotStatus(`Plot limit of ${MAX_SERIES_PER_PANEL} series reached — the rest of the range was skipped.`);
+      break;
+    }
+  }
+  updatePlotStatus();
+  refreshFieldButtons();
+  return true;
+}
+
 /** String fields of a topic that pass the current sidebar filter — the same
  *  name-based rule used for plottable fields (values aren't loaded until a
  *  topic is expanded, so they can't participate in the filter). */
@@ -2426,9 +2495,24 @@ function renderTopicList(): void {
       const button = el("button", "field-btn");
       button.dataset.msgId = String(topic.msgId);
       button.dataset.field = field.name;
+      button.title = "Click to plot · Shift+click to add every field between the last clicked one and this";
       button.appendChild(el("span", undefined, label));
       button.appendChild(el("span", "field-type", field.type));
-      button.addEventListener("click", () => toggleField(topic, field.name));
+      // Shift+click extends the browser's text selection by default —
+      // suppress that so range-adding doesn't also paint a selection
+      // across the sidebar.
+      button.addEventListener("mousedown", (ev) => {
+        if (ev.shiftKey) {
+          ev.preventDefault();
+        }
+      });
+      button.addEventListener("click", (ev) => {
+        if (ev.shiftKey && selectFieldRange(button)) {
+          return;
+        }
+        fieldRangeAnchor = { msgId: topic.msgId, field: field.name };
+        toggleField(topic, field.name);
+      });
       return button;
     };
 
