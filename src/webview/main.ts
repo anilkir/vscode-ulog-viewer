@@ -290,6 +290,32 @@ let saveAreaEl: HTMLElement;
 const lazyPaneBuilders = new Map<string, () => HTMLElement>();
 const builtPanes = new Map<string, HTMLElement>();
 
+/** Where Ctrl+F lands per tab — each pane builder registers a callback that
+ *  focuses its own search/filter input. A tab with no entry (Replay —
+ *  nothing text-based to search) leaves Ctrl+F unhandled. Cleared alongside
+ *  builtPanes in buildUi(), so a new file's panes re-register fresh inputs. */
+const searchFocusByTab = new Map<string, () => void>();
+
+/** The common Ctrl+F registration: plain focus-and-select of one input. */
+function registerSearchInput(tab: string, input: HTMLInputElement): void {
+  searchFocusByTab.set(tab, () => {
+    input.focus();
+    input.select();
+  });
+}
+
+document.addEventListener("keydown", (ev) => {
+  // Plain Ctrl+F / Cmd+F only — modified combinations (e.g. Ctrl+Shift+F)
+  // are VS Code's own, and must keep bubbling out of the webview.
+  if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === "f") {
+    const focusSearch = searchFocusByTab.get(state.currentTab);
+    if (focusSearch) {
+      ev.preventDefault();
+      focusSearch();
+    }
+  }
+});
+
 /* ---------------------------------------------------------------------- */
 /* Small DOM helpers                                                       */
 /* ---------------------------------------------------------------------- */
@@ -2436,14 +2462,43 @@ function renderTopicList(): void {
 /* Tab panes                                                               */
 /* ---------------------------------------------------------------------- */
 
-function makeFilterBox(placeholder: string, onInput: (value: string) => void): HTMLElement {
+function makeFilterBox(
+  placeholder: string,
+  onInput: (value: string) => void,
+): { box: HTMLElement; input: HTMLInputElement } {
   const box = el("div", "filter-box");
   const input = el("input");
   input.type = "text";
   input.placeholder = placeholder;
   input.addEventListener("input", () => onInput(input.value));
   box.appendChild(input);
-  return box;
+  return { box, input };
+}
+
+/**
+ * Hides a table's rows whose visible text doesn't match `filter` (see
+ * matchesSearchTerms) and re-stripes the survivors by *visible* position:
+ * hidden rows stay in the DOM, so a zebra table's CSS nth-child striping
+ * would drift out of sync with what's shown (same reasoning as the Messages
+ * pane's manual .zebra-row toggling). `forceShow` keeps every row visible —
+ * for a section whose *heading* matched the filter. Returns the visible-row
+ * count so callers can hide a section that filtered down to nothing.
+ */
+function filterTableRows(tbody: HTMLElement, filter: string, forceShow = false): number {
+  const table = tbody.closest("table");
+  if (table?.classList.contains("zebra-table")) {
+    table.classList.add("zebra-manual");
+  }
+  let visibleCount = 0;
+  for (const row of Array.from(tbody.children) as HTMLElement[]) {
+    const show = forceShow || matchesSearchTerms(row.textContent ?? "", filter);
+    row.style.display = show ? "" : "none";
+    if (show) {
+      row.classList.toggle("zebra-row", visibleCount % 2 === 1);
+      visibleCount++;
+    }
+  }
+  return visibleCount;
 }
 
 /**
@@ -4332,12 +4387,11 @@ function buildPlotsPane(): HTMLElement {
   pane.dataset.tab = "data";
 
   const sidebar = el("aside", "sidebar");
-  sidebar.appendChild(
-    makeFilterBox("Filter topics and fields…", (value) => {
-      state.topicFilter = value;
-      renderTopicList();
-    }),
-  );
+  const topicFilter = makeFilterBox("Filter topics and fields…", (value) => {
+    state.topicFilter = value;
+    renderTopicList();
+  });
+  sidebar.appendChild(topicFilter.box);
   topicListEl = el("div", "topic-list");
   sidebar.appendChild(topicListEl);
   pane.appendChild(sidebar);
@@ -4346,6 +4400,8 @@ function buildPlotsPane(): HTMLElement {
   resizer.title = "Drag to resize";
   pane.appendChild(resizer);
   setupSidebarResizer(resizer, sidebar);
+
+  registerSearchInput("data", topicFilter.input);
 
   const plotPane = el("div", "plot-pane");
   const toolbar = el("div", "plot-toolbar");
@@ -4528,8 +4584,18 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
   const pane = el("section", "tab-pane fixed-toolbar");
   pane.dataset.tab = "info";
 
+  // Ctrl+F target: one filter over both tables below, since a reader rarely
+  // knows (or cares) whether the key they want landed in "General" or in
+  // the log's own information entries.
+  const infoFilter = makeFilterBox("Filter info…", (value) => applyInfoFilter(value));
+  const toolbar = el("div", "pane-toolbar params-toolbar");
+  toolbar.appendChild(infoFilter.box);
+  pane.appendChild(toolbar);
+  registerSearchInput("info", infoFilter.input);
+
   const fixedSection = el("div", "pane-fixed");
-  fixedSection.appendChild(el("h3", "section", "General"));
+  const generalHeading = el("h3", "section", "General");
+  fixedSection.appendChild(generalHeading);
   const general = makeResizableTable(["Key", "Value"], [140], { zebra: true });
   const [startSec, endSec] = summary.timeRange;
   const rows: [string, string][] = [
@@ -4551,7 +4617,8 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
   }
   enableRowSelection(general.tbody);
   fixedSection.appendChild(general.table);
-  fixedSection.appendChild(el("h3", "section", "Log information"));
+  const infoHeading = el("h3", "section", "Log information");
+  fixedSection.appendChild(infoHeading);
   pane.appendChild(fixedSection);
 
   const info = makeResizableTable(["Key", "Value"], [220], { zebra: true });
@@ -4565,6 +4632,15 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
   const scrollArea = el("div", "table-scroll");
   scrollArea.appendChild(info.table);
   pane.appendChild(scrollArea);
+
+  const applyInfoFilter = (filter: string) => {
+    const generalVisible = filterTableRows(general.tbody, filter);
+    generalHeading.style.display = generalVisible > 0 ? "" : "none";
+    general.table.style.display = generalVisible > 0 ? "" : "none";
+    const infoVisible = filterTableRows(info.tbody, filter);
+    infoHeading.style.display = infoVisible > 0 ? "" : "none";
+    info.table.style.display = infoVisible > 0 ? "" : "none";
+  };
   return pane;
 }
 
@@ -4629,6 +4705,7 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
   filterInput.placeholder = "Filter parameters…";
   const filterBox = el("div", "filter-box");
   filterBox.appendChild(filterInput);
+  registerSearchInput("parameters", filterInput);
   toolbar.appendChild(filterBox);
   toolbar.appendChild(
     makeSegmented<ParameterQuickFilter>(
@@ -4925,6 +5002,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   searchInput.type = "text";
   searchInput.placeholder = "Search messages…";
   searchBox.appendChild(searchInput);
+  registerSearchInput("messages", searchInput);
   searchInput.addEventListener("input", () => {
     textFilter = searchInput.value;
     applyFilters();
@@ -5089,6 +5167,16 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
   // would show through.
   const outerPane = el("section", "tab-pane fixed-toolbar");
   outerPane.dataset.tab = "structure";
+
+  // Ctrl+F target: one filter across every section below. A section stays
+  // visible when its heading matches (all of its rows shown) or when at
+  // least one of its rows does; sections with nothing left collapse away.
+  const structureFilter = makeFilterBox("Filter structure…", (value) => applyStructureFilter(value));
+  const filterToolbar = el("div", "pane-toolbar params-toolbar");
+  filterToolbar.appendChild(structureFilter.box);
+  outerPane.appendChild(filterToolbar);
+  registerSearchInput("structure", structureFilter.input);
+
   const pane = el("div", "structure-scroll");
 
   pane.appendChild(el("h3", "section", "Overview"));
@@ -5240,6 +5328,37 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
     pane.appendChild(dropoutTable.table);
   }
 
+  const applyStructureFilter = (filter: string) => {
+    // The scroll pane is a flat list: an h3.section heading followed by its
+    // content until the next heading. Group them back up so each section
+    // can be shown or hidden as a unit.
+    const groups: { heading: HTMLElement; members: HTMLElement[] }[] = [];
+    for (const child of Array.from(pane.children) as HTMLElement[]) {
+      if (child.matches("h3.section")) {
+        groups.push({ heading: child, members: [] });
+      } else if (groups.length > 0) {
+        groups[groups.length - 1]!.members.push(child);
+      }
+    }
+    const empty = filter.trim() === "";
+    for (const group of groups) {
+      const headingMatches = !empty && matchesSearchTerms(group.heading.textContent ?? "", filter);
+      let visibleRows = 0;
+      for (const member of group.members) {
+        for (const tbody of member.querySelectorAll<HTMLElement>("tbody")) {
+          visibleRows += filterTableRows(tbody, filter, headingMatches);
+        }
+      }
+      // Row-less sections (the Overview stat tiles, "no dropouts" hints)
+      // have nothing to match on, so they show only via their heading.
+      const show = empty || headingMatches || visibleRows > 0;
+      group.heading.style.display = show ? "" : "none";
+      for (const member of group.members) {
+        member.style.display = show ? "" : "none";
+      }
+    }
+  };
+
   outerPane.appendChild(pane);
   return outerPane;
 }
@@ -5303,6 +5422,7 @@ function buildUi(summary: LogSummary): void {
   topbar.appendChild(tabs);
   app.appendChild(topbar);
 
+  searchFocusByTab.clear();
   app.appendChild(buildPlotsPane());
   builtPanes.clear();
   lazyPaneBuilders.set("replay", () => buildReplayPane(summary));

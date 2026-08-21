@@ -34,6 +34,10 @@ The viewer provides the following sections:
   section sizes, compatibility flags, message-type and log-level counts, all
   format definitions, every logged subscription, and any dropout events.
 
+Press `Ctrl+F` (`Cmd+F` on macOS) on any tab to jump to its search box: the
+topic filter on Data, the parameter and message filters on their tabs, and
+a content filter on Info and Structure.
+
 
 
 ## Supported files

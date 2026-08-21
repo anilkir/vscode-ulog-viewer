@@ -1790,6 +1790,15 @@ table.zebra-table tbody tr:nth-child(even) {
   background: color-mix(in srgb, var(--vscode-foreground) 3%, transparent);
 }
 
+/* A zebra table under a row filter (see filterTableRows) switches to manual
+   striping: hidden rows stay in the DOM, so nth-child would stripe by DOM
+   position and drift out of sync with what's visible. The filter re-applies
+   .zebra-row by visible position instead, and this neutralizes the
+   nth-child rule for every row the filter didn't stripe itself. */
+table.zebra-table.zebra-manual tbody tr:nth-child(even):not(.zebra-row) {
+  background: transparent;
+}
+
 .param-name {
   font-family: var(--vscode-editor-font-family, monospace);
 }
