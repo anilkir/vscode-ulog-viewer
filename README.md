@@ -21,7 +21,8 @@ The viewer provides the following sections:
 - **Data**: browse logged topics and select numeric fields to chart them.
   Add plot panels to compare signals; their time axes stay synchronized.
   Drag to zoom, double-click a chart, or select **Reset zoom** to restore the
-  full time range.
+  full time range. The **Topics** button in the plot toolbar collapses the
+  topic list to give the plots the full width.
 - **Replay**: replay the flight trajectory from a log on a 2D top-down map
   with HUD overlay showing critical flight data.
 - **Info**: review log metadata, duration, software and hardware versions,

@@ -92,6 +92,15 @@ const ICON_AUTORANGE =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<path d="M8 2 L8 14 M8 2 L5.5 4.5 M8 2 L10.5 4.5 M8 14 L5.5 11.5 M8 14 L10.5 11.5" ' +
   'fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+/** "Layout with a left sidebar" glyph for the topic-list toggle — the left
+ *  column is filled while the list is shown, hollow while it's hidden (see
+ *  .sidebar-toggle-fill in style.css), same state language as VS Code's own
+ *  sidebar toggle. */
+const ICON_SIDEBAR =
+  '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+  '<rect x="1.5" y="2.5" width="13" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/>' +
+  '<line x1="6.5" y1="2.5" x2="6.5" y2="13.5" stroke="currentColor" stroke-width="1.2"/>' +
+  '<rect class="sidebar-toggle-fill" x="2.5" y="3.5" width="3" height="9" fill="currentColor"/></svg>';
 const ICON_PREV =
   '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
   '<path d="M10 3 L5 8 L10 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -215,6 +224,10 @@ interface AppState {
    *  per-group analogue of `expandedTopics`. */
   expandedFieldGroups: Set<string>;
   topicFilter: string;
+  /** Data tab's topic-list sidebar hidden to give the plots the full width —
+   *  survives pane rebuilds (new file in the same editor) like the rest of
+   *  this state, but deliberately not persisted beyond that. */
+  sidebarCollapsed: boolean;
   parameterFilter: string;
   parameterQuickFilter: ParameterQuickFilter;
   currentTab: string;
@@ -254,6 +267,7 @@ const state: AppState = {
   expandedTopics: new Set(),
   expandedFieldGroups: new Set(),
   topicFilter: "",
+  sidebarCollapsed: false,
   parameterFilter: "",
   parameterQuickFilter: "all",
   currentTab: "data",
@@ -291,8 +305,9 @@ const lazyPaneBuilders = new Map<string, () => HTMLElement>();
 const builtPanes = new Map<string, HTMLElement>();
 
 /** Where Ctrl+F lands per tab — each pane builder registers a callback that
- *  focuses its own search/filter input. A tab with no entry (Replay —
- *  nothing text-based to search) leaves Ctrl+F unhandled. Cleared alongside
+ *  focuses its own search/filter input (the Data tab's first un-collapses
+ *  the sidebar its input lives in). A tab with no entry (Replay — nothing
+ *  text-based to search) leaves Ctrl+F unhandled. Cleared alongside
  *  builtPanes in buildUi(), so a new file's panes re-register fresh inputs. */
 const searchFocusByTab = new Map<string, () => void>();
 
@@ -4401,10 +4416,37 @@ function buildPlotsPane(): HTMLElement {
   pane.appendChild(resizer);
   setupSidebarResizer(resizer, sidebar);
 
-  registerSearchInput("data", topicFilter.input);
+  const sidebarToggle = el("button", "sidebar-toggle");
+  sidebarToggle.innerHTML = ICON_SIDEBAR;
+  sidebarToggle.appendChild(el("span", undefined, "Topics"));
+  const setSidebarCollapsed = (collapsed: boolean) => {
+    state.sidebarCollapsed = collapsed;
+    sidebar.style.display = collapsed ? "none" : "";
+    resizer.style.display = collapsed ? "none" : "";
+    sidebarToggle.classList.toggle("collapsed", collapsed);
+    sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+    sidebarToggle.title = collapsed
+      ? "Show the topic list"
+      : "Hide the topic list to give the plots the full width";
+    // The plots' flex row just changed width under them — uPlot only
+    // re-measures when told to.
+    resizeAllCharts();
+  };
+  sidebarToggle.addEventListener("click", () => setSidebarCollapsed(!state.sidebarCollapsed));
+  setSidebarCollapsed(state.sidebarCollapsed);
+  searchFocusByTab.set("data", () => {
+    // The topic filter lives inside the sidebar — focusing it while the
+    // sidebar is hidden would silently do nothing.
+    if (state.sidebarCollapsed) {
+      setSidebarCollapsed(false);
+    }
+    topicFilter.input.focus();
+    topicFilter.input.select();
+  });
 
   const plotPane = el("div", "plot-pane");
   const toolbar = el("div", "plot-toolbar");
+  toolbar.appendChild(sidebarToggle);
   plotStatusEl = el("span");
   toolbar.appendChild(plotStatusEl);
   targetLabelEl = el("span", "target-label");

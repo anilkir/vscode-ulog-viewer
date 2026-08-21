@@ -517,6 +517,27 @@ body.resizing-column {
   background: var(--vscode-button-hoverBackground);
 }
 
+.plot-toolbar button.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sidebar-toggle svg {
+  display: block;
+}
+
+/* The icon's left column: filled while the topic list is shown, hollow once
+   it's collapsed — same state language as VS Code's own sidebar toggle. */
+.sidebar-toggle .sidebar-toggle-fill {
+  opacity: 0.9;
+  transition: opacity 0.12s ease;
+}
+
+.sidebar-toggle.collapsed .sidebar-toggle-fill {
+  opacity: 0;
+}
+
 .target-label {
   color: var(--vscode-textLink-foreground);
   white-space: nowrap;
