@@ -14,11 +14,14 @@
  *    for a 24MB file — of which only 1.2 seconds was actual read() time.
  *    The other ~119 seconds was exactly this per-message await overhead,
  *    apparently far worse on that machine than in our own testing.
- *  - Separately, `ulog.header.parameters` doesn't preserve whether a value
- *    came from a 'P' (current) or 'Q' (default) message, and there's no way
- *    to distinguish "header section" parameter declarations (initial
- *    values) from "data section" ones (genuine mid-flight changes) through
- *    the public API at all.
+ *  - Separately, `ulog.header.parameters` merges 'P' (current value) and
+ *    'Q' (default value) messages into one last-write-wins map. That's
+ *    outright wrong for PX4 logs: the logger writes 'Q' messages *after*
+ *    the 'P's, and only for parameters whose value differs from a default —
+ *    so the merge replaces exactly the changed parameters' real values with
+ *    their defaults. There's also no way to distinguish "header section"
+ *    parameter declarations (initial values) from "data section" ones
+ *    (genuine mid-flight changes) through the public API at all.
  *
  * So we read message headers ourselves via the library's lower-level
  * exported primitives (MessageType, parseFieldDefinition,
@@ -79,16 +82,13 @@ const DATA_SECTION_TYPES = new Set<number>([
   MessageType.Dropout,
 ]);
 
-export interface ParsedParameter {
-  value: number;
-  defaultTypes: number;
-}
-
 export interface UlogFileScanResult {
   ulogVersion: number;
   information: Map<string, FieldPrimitive | FieldPrimitive[]>;
-  /** Current (header-section) parameter values — matches `ulog.header.parameters` semantics. */
-  parameters: Map<string, ParsedParameter>;
+  /** Current (header-section) parameter values, from 'P' messages only.
+   *  Deliberately NOT `ulog.header.parameters` semantics — see this module's
+   *  docstring for why that merge shows defaults instead of real values. */
+  parameters: Map<string, number>;
   definitions: Map<string, MessageDefinition>;
   subscriptions: Map<number, Subscription>;
   dataMessageCounts: Map<number, number>;
@@ -119,6 +119,9 @@ export interface UlogFileScanResult {
    * (ParameterDefault) messages — distinct from the *current* value. Lets
    * us show "this was changed from its build-time default" using data
    * already in the log, with no external version-specific database needed.
+   * When a parameter has both defaults recorded, this keeps the one that's
+   * actually effective on the vehicle: the current-setup (airframe)
+   * default, which overrides the system-wide one.
    */
   defaultsByParam: Map<string, number>;
   logMessages: LogMessageInfo[];
@@ -315,6 +318,11 @@ function isValidParameterField(field: ReturnType<typeof parseFieldDefinition>): 
   return Boolean(field && (field.type === "int32_t" || field.type === "float") && field.arrayLength == undefined);
 }
 
+/** Bit 1 of a 'Q' (ParameterDefault) message's default_types bitfield — PX4's
+ *  ulog_parameter_default_type_t: bit 0 is the system-wide default, bit 1 the
+ *  current-setup (airframe) default that overrides it on the vehicle. */
+const DEFAULT_TYPE_CURRENT_SETUP = 1 << 1;
+
 export async function scanUlogFile(filelike: Filelike): Promise<UlogFileScanResult> {
   // Some Filelike implementations (e.g. the Node FileReader) don't know
   // their own size until open() has resolved, and this scan may run
@@ -339,12 +347,15 @@ export async function scanUlogFile(filelike: Filelike): Promise<UlogFileScanResu
   const fileHeaderTimestampUsec = Number(reader.u64());
 
   const information = new Map<string, FieldPrimitive | FieldPrimitive[]>();
-  const parameters = new Map<string, ParsedParameter>();
+  const parameters = new Map<string, number>();
   const definitions = new Map<string, MessageDefinition>();
   const subscriptions = new Map<number, Subscription>();
   const dataMessageCounts = new Map<number, number>();
   const changesByParam = new Map<string, number[]>();
   const defaultsByParam = new Map<string, number>();
+  // Parameters whose defaultsByParam entry came from a current-setup-flagged
+  // 'Q' — a later system-only 'Q' must not displace those (see defaultsByParam).
+  const currentSetupDefaults = new Set<string>();
   const logMessages: LogMessageInfo[] = [];
   const timestampOffsetCache = new Map<number, number>();
   const untrustedMsgIds = new Set<number>();
@@ -490,9 +501,22 @@ export async function scanUlogFile(filelike: Filelike): Promise<UlogFileScanResu
             const view = new DataView(valueBytes.buffer, valueBytes.byteOffset, valueBytes.byteLength);
             const value = parseBasicFieldValue(field!, view) as number;
             if (isDefault) {
-              defaultsByParam.set(field!.name, value);
-            }
-            if (inDataSection) {
+              // A 'Q' carries a *default*, never the current value — it must
+              // not touch `parameters` or `changesByParam`. Keep the default
+              // that's effective on the vehicle: a current-setup (airframe)
+              // 'Q' always wins; a system-only 'Q' fills in only when no
+              // current-setup default was recorded. (PX4 emits a single 'Q'
+              // with both bits set when the two defaults are equal, or a
+              // current-setup one then a system one when they differ.)
+              if ((defaultTypes & DEFAULT_TYPE_CURRENT_SETUP) !== 0 || !currentSetupDefaults.has(field!.name)) {
+                defaultsByParam.set(field!.name, value);
+                if ((defaultTypes & DEFAULT_TYPE_CURRENT_SETUP) !== 0) {
+                  currentSetupDefaults.add(field!.name);
+                }
+              }
+            } else if (inDataSection) {
+              // A 'P' after the header means the value changed at runtime —
+              // appended in file order, so repeated changes all show up.
               const list = changesByParam.get(field!.name);
               if (list) {
                 list.push(value);
@@ -500,9 +524,8 @@ export async function scanUlogFile(filelike: Filelike): Promise<UlogFileScanResu
                 changesByParam.set(field!.name, [value]);
               }
             } else {
-              // Header section: this is the current/initial value — last
-              // P-or-Q write wins, matching ulog.header.parameters semantics.
-              parameters.set(field!.name, { value, defaultTypes });
+              // Header section 'P': the current/initial value.
+              parameters.set(field!.name, value);
             }
           }
           break;

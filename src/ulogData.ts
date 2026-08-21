@@ -131,11 +131,11 @@ export function buildSummary(scan: UlogFileScanResult, fileName: string, fileSiz
   ]);
 
   const parameters = [...scan.parameters.entries()]
-    .map(([name, entry]) => ({
+    .map(([name, value]) => ({
       name,
-      value: entry.value,
+      value,
       defaultValue: scan.defaultsByParam.get(name),
-      changes: meaningfulParameterChanges(entry.value, scan.changesByParam.get(name) ?? []),
+      changes: meaningfulParameterChanges(value, scan.changesByParam.get(name) ?? []),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 

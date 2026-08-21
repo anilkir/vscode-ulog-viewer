@@ -90,8 +90,10 @@ export interface ParameterInfo {
   value: number;
   /**
    * PX4's recorded default value for this build, from the log's own 'Q'
-   * (ParameterDefault) messages. Undefined if the log doesn't include them
-   * (older firmware) or this specific parameter never got one.
+   * (ParameterDefault) messages — the default actually effective on the
+   * vehicle (the current-setup/airframe default when it overrides the
+   * system-wide one). Undefined if the log doesn't include them (older
+   * firmware) or this specific parameter never got one.
    */
   defaultValue: number | undefined;
   /**
