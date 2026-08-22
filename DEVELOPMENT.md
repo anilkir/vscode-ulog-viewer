@@ -42,8 +42,16 @@ Parsing stays in the extension host so the webview only ever receives
 display-ready data; new views (maps, flight-mode timelines, …) can be added by
 extending the protocol.
 
-## Ideas for later
+## TODO
 
+- Log start timestamp displayed next to log name in header
+- If a new plot is added while others are zoomed in with markers, then markers
+  on new plot's default range could overflow from the view area which can 
+  stop the plot from being dragged to a different spot in the order
+- Remove the display/hide buttons for each series on the bottom and overlay that
+  functionality to the top elements with X to save vertical stacking space
+- A way to "look for anomalies in this time period"
+- Add an internal reference for PX4 parameters in different PX4 versions
 - GPS ground track / map view
 - Flight-mode and failsafe timeline overlays on plots
 - Vehicle attitude / 3D view
