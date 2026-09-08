@@ -58,3 +58,9 @@ extending the protocol.
 - Plot panel layouts (and selected series) persisted per file
 - Parameter diff between two logs
 - Downsampling for very large logs; streaming extraction with progress
+- Marker legend should be movable to left/right and hideable
+- Add a quick integer display next to topic names if the value is constant throughout the log, don't display it if the value changes
+- Topics are listed where the order goes [0] [1] [10] [11] [2], we should order them properly
+- A stacked plot mode where multiple plots can be put on a vertically stacked display to save space and show more data on a common timeframe
+- A way to convert quaternion in attitude message to RPY for plots
+- A way to change the displayed units/scale on plots, e.g. change 0.91 to 91%, change m/s to mph, etc.
