@@ -1,3 +1,4 @@
+import { batteryReadingsAt, type ReplayBattery } from "../replayBattery";
 import { quaternionToRpy } from "../quaternion";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
@@ -3689,10 +3690,8 @@ interface ReplaySceneData {
   vx: Float64Array | undefined;
   vy: Float64Array | undefined;
   vz: Float64Array | undefined;
-  /** battery_status readings (own timeline). remaining is a 0..1 fraction. */
-  batteryRemaining: TimeSeries | undefined;
-  batteryVoltage: TimeSeries | undefined;
-  batteryCurrent: TimeSeries | undefined;
+  /** All battery_status instances, each on its own timeline. */
+  batteries: ReplayBattery[];
 }
 
 function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
@@ -3718,9 +3717,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     vx,
     vy,
     vz,
-    batteryRemaining,
-    batteryVoltage,
-    batteryCurrent,
+    batteries,
   } = data;
 
   if (times.length === 0) {
@@ -3873,11 +3870,15 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   const groundSpeedValueEl = vx && vy ? speed.add("GS") : undefined;
   const climbValueEl = vz ? speed.add("Climb") : undefined;
 
-  // Battery — remaining %, pack voltage, and current draw, whichever exist.
-  const batt = makeKvGrid();
-  const batteryRemainingEl = batteryRemaining ? batt.add("Batt") : undefined;
-  const batteryVoltageEl = batteryVoltage ? batt.add("Volt") : undefined;
-  const batteryCurrentEl = batteryCurrent ? batt.add("Curr") : undefined;
+  const batteryCards = batteries.map((battery) => {
+    const grid = makeKvGrid();
+    return {
+      battery, grid: grid.grid,
+      remainingEl: battery.remaining ? grid.add("Batt") : undefined,
+      voltageEl: battery.voltage ? grid.add("Volt") : undefined,
+      currentEl: battery.current ? grid.add("Curr") : undefined,
+    };
+  });
 
   // Airspeed gets its own larger, bolder readout rather than blending into
   // the small print — the one number here that's often safety-relevant.
@@ -3929,7 +3930,10 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   }
   addCard("Speed", speedChildren);
 
-  addCard("Battery", batt.grid.children.length > 0 ? [batt.grid] : []);
+  for (const card of batteryCards) {
+    addCard(batteryCards.length === 1 ? "Battery" : card.battery.name,
+      card.grid.children.length > 0 ? [card.grid] : []);
+  }
 
   if (hudLeft.children.length > 0) {
     canvasWrap.appendChild(hudLeft);
@@ -4213,17 +4217,11 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
       climbValueEl.textContent = Number.isFinite(climb) ? `${climb >= 0 ? "+" : ""}${climb.toFixed(1)} m/s` : "—";
     }
 
-    if (batteryRemainingEl && batteryRemaining) {
-      const v = atOrBefore(batteryRemaining);
-      batteryRemainingEl.textContent = Number.isFinite(v) ? `${Math.round(v * 100)} %` : "—";
-    }
-    if (batteryVoltageEl && batteryVoltage) {
-      const v = atOrBefore(batteryVoltage);
-      batteryVoltageEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} V` : "—";
-    }
-    if (batteryCurrentEl && batteryCurrent) {
-      const v = atOrBefore(batteryCurrent);
-      batteryCurrentEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} A` : "—";
+    for (const card of batteryCards) {
+      const readings = batteryReadingsAt(card.battery, times[clampedIndex]!);
+      if (card.remainingEl) card.remainingEl.textContent = readings.remaining;
+      if (card.voltageEl) card.voltageEl.textContent = readings.voltage;
+      if (card.currentEl) card.currentEl.textContent = readings.current;
     }
 
     if (airspeed) {
@@ -4448,7 +4446,9 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
   const statusTopic = findTopic(summary, "vehicle_status");
   const airDataTopic = findTopic(summary, "vehicle_air_data");
   const attitudeTopic = findTopic(summary, "vehicle_attitude");
-  const batteryTopic = findTopic(summary, "battery_status");
+  const batteryTopics = summary.topics
+    .filter((t) => t.messageName === "battery_status" && t.count > 0)
+    .sort((a, b) => a.multiId - b.multiId || a.msgId - b.msgId);
 
   const homeTopic = findTopic(summary, "home_position");
   const hasHomeLocal =
@@ -4497,9 +4497,15 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
     fetchOptionalSeries(airDataTopic, "baro_alt_meter"),
     fetchOptionalSeries(gpsTopic, "altitude_msl_m"),
     fetchAttitude(attitudeTopic),
-    fetchOptionalSeries(batteryTopic, "remaining"),
-    fetchOptionalSeries(batteryTopic, "voltage_v"),
-    fetchOptionalSeries(batteryTopic, "current_a"),
+    Promise.all(batteryTopics.map(async (batteryTopic): Promise<ReplayBattery> => {
+      const [remaining, voltage, current, connected] = await Promise.all([
+        fetchOptionalSeries(batteryTopic, "remaining"),
+        fetchOptionalSeries(batteryTopic, "voltage_v"),
+        fetchOptionalSeries(batteryTopic, "current_a"),
+        fetchOptionalSeries(batteryTopic, "connected"),
+      ]);
+      return { name: `Battery [${batteryTopic.multiId}]`, remaining, voltage, current, connected };
+    })).then((batteries) => batteries.filter((b) => b.remaining || b.voltage || b.current)),
     hasHomeLocal
       ? Promise.all([
           fetchSeriesAdHoc(homeTopic!.msgId, "x"),
@@ -4560,9 +4566,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
         baroAlt,
         gpsAlt,
         attitude,
-        batteryRemaining,
-        batteryVoltage,
-        batteryCurrent,
+        batteries,
         home,
         waypoints,
         gpsData,
@@ -4590,9 +4594,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
           vx: vxSeries?.values,
           vy: vySeries?.values,
           vz: vzSeries?.values,
-          batteryRemaining,
-          batteryVoltage,
-          batteryCurrent,
+          batteries,
         });
       },
     )
