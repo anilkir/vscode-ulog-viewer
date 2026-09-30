@@ -512,7 +512,7 @@ function formatWallClockDate(rawBootRelativeSec: number): string {
   }
 }
 
-/** The log's own start time as an absolute date, for the Info page — always
+/** The log's own start time as an absolute date, for the header and Info page — always
  *  UTC (unlike `formatWallClock`, which follows the Data tab's own
  *  user-configurable timezone), since this is a one-off fact about the log
  *  rather than an interactive axis, and UTC keeps it unambiguous regardless
@@ -5556,6 +5556,14 @@ function buildUi(summary: LogSummary): void {
 
   const topbar = el("header", "topbar");
   topbar.appendChild(el("span", "file-name", summary.fileName));
+  const startTime = formatUtcStartTime(summary);
+  const startTimeEl = el(
+    "span",
+    "file-meta",
+    startTime.endsWith(" UTC") ? startTime : "Start time unavailable",
+  );
+  startTimeEl.title = `Log start: ${startTime}`;
+  topbar.appendChild(startTimeEl);
   const infoMap = new Map(summary.info);
   const metaParts = [
     formatDuration(summary.durationSec),

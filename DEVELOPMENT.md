@@ -44,7 +44,6 @@ extending the protocol.
 
 ## TODO
 
-- Log start timestamp displayed next to log name in header
 - If a new plot is added while others are zoomed in with markers, then markers
   on new plot's default range could overflow from the view area which can 
   stop the plot from being dragged to a different spot in the order
