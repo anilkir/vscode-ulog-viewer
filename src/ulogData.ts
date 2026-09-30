@@ -5,6 +5,7 @@
  * fast low-level scan in paramScan.ts — see that module's docstring for why
  * `ulog.open()`/`readMessages()` are never used at all.
  */
+import { quaternionToRpy, quaternionSource, odometryTopics, rpyDescription } from "./quaternion";
 import { MessageType, type FieldPrimitive, type Filelike, type MessageDefinition, type Subscription } from "@foxglove/ulog";
 import { scanGpsDump, scanGpsDumpColumns, scanTopicColumns, scanTopicStrings, type UlogFileScanResult } from "./paramScan";
 import type {
@@ -85,6 +86,20 @@ export function plottableFields(subscription: Subscription, definitions: Map<str
       fields.push({ name: field.name, type: field.type });
     }
   }
+  const source = quaternionSource(subscription.name);
+  const quaternion = subscription.fields.find((f) => f.name === source);
+  const poseFrame = subscription.fields.find((f) => f.name === "pose_frame");
+  if (source && quaternion?.arrayLength === 4 && !quaternion.isComplex &&
+      ["float", "double"].includes(quaternion.type) &&
+      (!odometryTopics.has(subscription.name) || (poseFrame?.type === "uint8_t" && poseFrame.arrayLength == undefined))) {
+    for (const angle of ["roll", "pitch", "yaw"]) {
+      fields.push({
+        name: `derived_rpy_${source}.${angle}`, type: "deg",
+        derived: { group: `RPY from ${source}`, label: `${angle[0]!.toUpperCase()}${angle.slice(1)}`,
+          description: rpyDescription(source) },
+      });
+    }
+  }
   return fields;
 }
 
@@ -118,11 +133,38 @@ export function stringFields(subscription: Subscription): StringFieldInfo[] {
  * columns are per-frame-type arrival-gap series synthesized from the raw
  * stream, not struct fields (see plottableFields above).
  */
-export function extractTopicColumns(filelike: Filelike, scan: UlogFileScanResult, msgId: number): Promise<TopicColumns> {
+export async function extractTopicColumns(filelike: Filelike, scan: UlogFileScanResult, msgId: number): Promise<TopicColumns> {
   if (scan.subscriptions.get(msgId)?.name === "gps_dump") {
     return scanGpsDumpColumns(filelike, scan, msgId);
   }
-  return scanTopicColumns(filelike, scan, msgId);
+  const data = await scanTopicColumns(filelike, scan, msgId);
+  const subscription = scan.subscriptions.get(msgId);
+  if (!subscription || scan.untrustedTopics.some((topic) => topic.msgId === msgId)) return data;
+  return addDerivedRpyColumns(data, subscription, scan.definitions);
+}
+
+/** Adds computed angles on the original sample timeline, preserving gaps. */
+export function addDerivedRpyColumns(
+  data: TopicColumns, subscription: Subscription, definitions: Map<string, MessageDefinition>,
+): TopicColumns {
+  const derived = plottableFields(subscription, definitions).filter((f) => f.derived);
+  if (derived.length === 0) return data;
+  const source = quaternionSource(subscription.name)!;
+  const components = [0, 1, 2, 3].map((i) => data.columns.get(`${source}[${i}]`));
+  if (components.some((c) => !c || c.length !== data.times.length)) {
+    throw new Error("Quaternion components are missing or have mismatched sample counts");
+  }
+  const angles = derived.map(() => new Float64Array(data.times.length).fill(NaN));
+  const frames = data.columns.get("pose_frame");
+  for (let i = 0; i < data.times.length; i++) {
+    if (!Number.isFinite(data.times[i]) || data.times[i]! < 0 ||
+        (i > 0 && data.times[i]! < data.times[i - 1]!)) continue;
+    if (odometryTopics.has(subscription.name) && frames?.[i] !== 1 && frames?.[i] !== 2) continue;
+    const rpy = quaternionToRpy(components[0]![i]!, components[1]![i]!, components[2]![i]!, components[3]![i]!);
+    for (let a = 0; a < 3; a++) angles[a]![i] = rpy[a]! * 180 / Math.PI;
+  }
+  derived.forEach((field, i) => data.columns.set(field.name, angles[i]!));
+  return data;
 }
 
 /**
@@ -273,7 +315,9 @@ function buildTopics(scan: UlogFileScanResult): TopicInfo[] {
       messageName: subscription.name,
       multiId: subscription.multiId,
       count: scan.dataMessageCounts.get(msgId) ?? 0,
-      fields: plottableFields(subscription, scan.definitions),
+      fields: plottableFields(subscription, scan.definitions).filter(
+        (field) => !field.derived || !scan.untrustedTopics.some((topic) => topic.msgId === msgId),
+      ),
       stringFields: stringFields(subscription),
     });
   }

@@ -1,3 +1,4 @@
+import { quaternionToRpy } from "../quaternion";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
@@ -729,7 +730,10 @@ function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
 
   const offsetSec = state.zeroOffset ? (state.summary?.timeRange[0] ?? 0) : 0;
   const tables = panel.series.map(
-    (s) => [offsetTimes(s.times, offsetSec), s.values] as uPlot.AlignedData,
+    (s) => [offsetTimes(s.times, offsetSec),
+      s.values.some((v) => !Number.isFinite(v))
+        ? Array.from(s.values, (v) => Number.isFinite(v) ? v : null)
+        : s.values] as uPlot.AlignedData,
   );
   const data = tables.length === 1 ? tables[0]! : uPlot.join(tables);
 
@@ -2453,7 +2457,16 @@ function populateStringsSection(msgId: number, errorMessage?: string): void {
   }
 }
 
+let derivedTooltip: HTMLElement | undefined;
+function hideDerivedTooltip(): void {
+  derivedTooltip?.remove();
+  derivedTooltip = undefined;
+}
+window.addEventListener("scroll", hideDerivedTooltip, true);
+window.addEventListener("resize", hideDerivedTooltip);
+
 function renderTopicList(): void {
+  hideDerivedTooltip();
   const summary = state.summary;
   if (!summary) {
     return;
@@ -2493,9 +2506,13 @@ function renderTopicList(): void {
 
     const makeFieldButton = (field: FieldInfo, label: string): HTMLElement => {
       const button = el("button", "field-btn");
+      if (field.derived) {
+        button.classList.add("derived-field-btn");
+      }
       button.dataset.msgId = String(topic.msgId);
       button.dataset.field = field.name;
       button.title = "Click to plot · Shift+click to add every field between the last clicked one and this";
+      if (field.derived) button.title += ` · ${field.derived.description}`;
       button.appendChild(el("span", undefined, label));
       button.appendChild(el("span", "field-type", field.type));
       // Shift+click extends the browser's text selection by default —
@@ -2524,7 +2541,7 @@ function renderTopicList(): void {
     const instanceGroups = new Map<string, FieldInfo[]>();
     const renderOrder: (FieldInfo | string)[] = [];
     for (const field of matchingFields) {
-      const instancePrefix = /^(.+\[\d+\])\./.exec(field.name)?.[1];
+      const instancePrefix = field.derived?.group ?? /^(.+\[\d+\])\./.exec(field.name)?.[1];
       if (instancePrefix != undefined) {
         let group = instanceGroups.get(instancePrefix);
         if (!group) {
@@ -2550,6 +2567,41 @@ function renderTopicList(): void {
       groupDetails.open = filter !== "" && !topicMatches ? true : state.expandedFieldGroups.has(groupKey);
       const groupSummary = el("summary");
       groupSummary.appendChild(el("span", undefined, entry));
+      const derivedInfo = group[0]?.derived;
+      if (derivedInfo) {
+        groupDetails.classList.add("derived-field-group");
+        const info = el("button", "derived-info", "ⓘ");
+        info.type = "button";
+        info.setAttribute("aria-label", "About computed RPY angles");
+        const showTooltip = (): void => {
+          hideDerivedTooltip();
+          const tooltip = el("div", "derived-tooltip", derivedInfo.description);
+          tooltip.id = "derived-rpy-tooltip";
+          tooltip.setAttribute("role", "tooltip");
+          info.setAttribute("aria-describedby", tooltip.id);
+          document.body.appendChild(tooltip);
+          derivedTooltip = tooltip;
+          const rect = info.getBoundingClientRect();
+          const width = tooltip.offsetWidth;
+          const height = tooltip.offsetHeight;
+          tooltip.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+          tooltip.style.top = `${Math.max(8, rect.bottom + height + 8 <= window.innerHeight
+            ? rect.bottom + 6 : rect.top - height - 6)}px`;
+        };
+        const hideTooltip = (): void => {
+          hideDerivedTooltip();
+          info.removeAttribute("aria-describedby");
+        };
+        info.addEventListener("mouseenter", showTooltip);
+        info.addEventListener("mouseleave", hideTooltip);
+        info.addEventListener("focus", showTooltip);
+        info.addEventListener("blur", hideTooltip);
+        info.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") hideTooltip();
+        });
+        info.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); });
+        groupSummary.appendChild(info);
+      }
       groupSummary.appendChild(el("span", "topic-count", `(${group.length})`));
       groupDetails.appendChild(groupSummary);
       groupDetails.addEventListener("toggle", () => {
@@ -2563,7 +2615,7 @@ function renderTopicList(): void {
       });
       const groupList = el("div", "field-list");
       for (const field of group) {
-        groupList.appendChild(makeFieldButton(field, field.name.slice(entry.length + 1)));
+        groupList.appendChild(makeFieldButton(field, field.derived?.label ?? field.name.slice(entry.length + 1)));
       }
       groupDetails.appendChild(groupList);
       fieldList.appendChild(groupDetails);
@@ -3028,7 +3080,7 @@ function drawVehicleIcon(
  *  banks and pitches up. Fixed bank-scale ticks around the top with a moving
  *  pointer on the disc show bank angle; a pitch ladder gives magnitude.
  *  `rollRad`/`pitchRad` are radians (PX4 sign: +roll = right bank, +pitch =
- *  nose up); non-finite values render level. Redrawn each frame into its own
+ *  nose up); non-finite values render an unavailable indicator. Redrawn each frame into its own
  *  small canvas, sized to its CSS box (independent of the map canvas). */
 const ATTITUDE_SKY = "#4a90d9";
 const ATTITUDE_GROUND = "#9c6b3f";
@@ -3052,8 +3104,15 @@ function drawAttitudeIndicator(canvas: HTMLCanvasElement, rollRad: number, pitch
   const cx = size / 2;
   const cy = size / 2;
   const radius = size / 2 - 1;
-  const roll = Number.isFinite(rollRad) ? rollRad : 0;
-  const pitch = Number.isFinite(pitchRad) ? pitchRad : 0;
+  if (!Number.isFinite(rollRad) || !Number.isFinite(pitchRad)) {
+    ctx.fillStyle = resolveColor("var(--vscode-descriptionForeground)");
+    ctx.textAlign = "center";
+    ctx.font = "12px sans-serif";
+    ctx.fillText("Attitude unavailable", size / 2, size / 2);
+    return;
+  }
+  const roll = rollRad;
+  const pitch = pitchRad;
   const rad2deg = 180 / Math.PI;
   // ~±55° of pitch spans the radius — enough range without cramping the rungs.
   const pitchPxPerDeg = radius / 55;
@@ -3422,8 +3481,7 @@ function fetchAttitude(topic: TopicInfo | undefined): Promise<ReplayAttitude | u
         const x = q1!.values[i]!;
         const y = q2!.values[i]!;
         const z = q3!.values[i]!;
-        roll[i] = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
-        pitch[i] = Math.asin(Math.max(-1, Math.min(1, 2 * (w * y - z * x))));
+        [roll[i], pitch[i]] = quaternionToRpy(w, x, y, z);
       }
       return { times, roll, pitch };
     })

@@ -2130,3 +2130,39 @@ tr.row-selected td {
 .manage-view-delete:hover {
   color: var(--vscode-errorForeground);
 }
+
+/* Computed angles are distinct from the raw fields, across VS Code themes. */
+.derived-field-group > summary,
+.derived-field-btn {
+  color: var(--vscode-textLink-foreground);
+}
+
+.derived-info {
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 0 4px;
+  margin-left: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.derived-info:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.derived-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  pointer-events: none;
+}

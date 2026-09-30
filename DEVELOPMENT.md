@@ -60,5 +60,4 @@ extending the protocol.
 - Marker legend should be movable to left/right and hideable
 - Add a quick integer display next to topic names if the value is constant throughout the log, don't display it if the value changes
 - A stacked plot mode where multiple plots can be put on a vertically stacked display to save space and show more data on a common timeframe
-- A way to convert quaternion in attitude message to RPY for plots
 - A way to change the displayed units/scale on plots, e.g. change 0.91 to 91%, change m/s to mph, etc.

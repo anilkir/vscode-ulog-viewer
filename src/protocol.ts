@@ -10,6 +10,8 @@ export interface FieldInfo {
   name: string;
   /** ULog primitive type, e.g. "float", "uint8_t". */
   type: string;
+  /** Present for computed fields; never a raw logged value. */
+  derived?: { group: string; label: string; description: string };
 }
 
 /**
