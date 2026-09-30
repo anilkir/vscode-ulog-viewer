@@ -1432,7 +1432,10 @@ body.resizing-panel-height {
   padding: 2px 6px;
   font-size: 0.75em;
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
   z-index: 6;
 }
 
@@ -2205,4 +2208,49 @@ tr.row-selected td {
   color: var(--vscode-descriptionForeground);
   font-size: 0.85em;
   font-variant-numeric: tabular-nums;
+}
+
+.plot-marker-legend-toggle {
+  background: var(--vscode-editor-background);
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 2px;
+  padding: 0 2px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plot-marker-legend-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.plot-marker-values.dragging-legend {
+  cursor: grabbing;
+}
+
+.plot-marker-values:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.plot-marker-tag.marker-focused,
+.plot-marker-values.marker-focused {
+  z-index: 8;
+}
+
+.plot-marker-tag:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.plot-marker-legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: transparent;
+  padding: 1px 2px;
+}
+
+.plot-marker-legend-toggle:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground);
 }

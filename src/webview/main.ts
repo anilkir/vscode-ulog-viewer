@@ -206,6 +206,8 @@ interface Marker {
   id: number;
   timeSec: number;
   color: string;
+  legendSide: "auto" | "left" | "right";
+  legendHidden: boolean;
 }
 
 interface MarkerEls {
@@ -213,6 +215,7 @@ interface MarkerEls {
   tag: HTMLElement;
   timeLabel: HTMLElement;
   values: HTMLElement;
+  legendToggle: HTMLButtonElement;
 }
 
 interface AppState {
@@ -988,6 +991,42 @@ function hideDragLabels(panel: PlotPanel): void {
 /* Time markers                                                           */
 /* ---------------------------------------------------------------------- */
 
+const ICON_EYE = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M1 8 Q8 -1 15 8 Q8 17 1 8 Z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const ICON_EYE_HIDDEN = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M1 8 Q8 -1 15 8 Q8 17 1 8 M2 2 L14 14" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+
+function focusMarker(id: number): void {
+  for (const panel of state.panels) {
+    for (const [markerId, elements] of panel.markerEls) {
+      elements.tag.classList.toggle("marker-focused", markerId === id);
+      elements.values.classList.toggle("marker-focused", markerId === id);
+    }
+  }
+}
+
+/** Greedy rows prevent overlapping timestamps, including at chart edges. */
+function layoutMarkerTags(panel: PlotPanel): void {
+  const chart = panel.chart;
+  if (!chart || chart.over.clientWidth <= 0) return;
+  const width = chart.over.clientWidth;
+  const visible = [...panel.markerEls.values()].filter((els) => els.tag.style.display !== "none");
+  const rows: { left: number; right: number }[][] = [];
+  const rowHeight = Math.max(20, ...visible.map((els) => els.tag.offsetHeight)) + 4;
+  for (const els of visible) {
+    const x = parseFloat(els.hit.style.left);
+    if (!Number.isFinite(x)) continue;
+    const tagWidth = els.tag.offsetWidth;
+    const left = Math.max(0, Math.min(x - tagWidth / 2, width - tagWidth));
+    const right = left + tagWidth;
+    let row = rows.findIndex((intervals) => intervals.every((i) => right + 4 <= i.left || left >= i.right + 4));
+    if (row < 0) { row = rows.length; rows.push([]); }
+    rows[row]!.push({ left, right });
+    els.tag.style.left = `${left + tagWidth / 2}px`;
+    els.tag.style.top = `${4 + row * rowHeight}px`;
+  }
+  // Keep legends below the timestamp controls, so every row remains usable.
+  for (const els of visible) els.values.style.top = `${4 + rows.length * rowHeight}px`;
+}
+
 /** Repositions one marker's overlay in one panel and refreshes the values
  *  shown there — called after a drag, a zoom/pan (via the `setScale` hook),
  *  and once right after the overlay elements are first created. */
@@ -997,6 +1036,10 @@ function updateMarkerVisual(panel: PlotPanel, marker: Marker): void {
   if (!chart || !els) {
     return;
   }
+  els.legendToggle.innerHTML = marker.legendHidden ? ICON_EYE_HIDDEN : ICON_EYE;
+  els.legendToggle.title = marker.legendHidden ? "Show marker legend" : "Hide marker legend";
+  els.legendToggle.setAttribute("aria-label", els.legendToggle.title);
+  els.legendToggle.setAttribute("aria-expanded", String(!marker.legendHidden));
   const offsetSec = state.zeroOffset ? (state.summary?.timeRange[0] ?? 0) : 0;
   const displayTime = marker.timeSec - offsetSec;
   const px = chart.valToPos(displayTime, "x");
@@ -1015,21 +1058,25 @@ function updateMarkerVisual(panel: PlotPanel, marker: Marker): void {
     els.tag.style.display = outOfRange ? "none" : "";
     els.values.style.display = outOfRange ? "none" : "";
     if (outOfRange) {
+      layoutMarkerTags(panel);
       return;
     }
     // The values readout sits off to whichever side of the line has more
     // room, rather than centered on top of it — centered would both cover
     // the chart right where the marker is and risk clipping off the panel
     // edge for markers placed near either side.
-    els.values.classList.toggle("marker-flip-left", px > chartWidth / 2);
+    els.values.classList.toggle("marker-flip-left",
+      marker.legendSide === "left" || (marker.legendSide === "auto" && px > chartWidth / 2));
   }
   els.hit.style.left = `${px}px`;
   els.tag.style.left = `${px}px`;
   els.values.style.left = `${px}px`;
   els.timeLabel.textContent = formatPlotTime(displayTime, state.timeUnit, 3);
+  els.tag.setAttribute("aria-label", `Time marker at ${els.timeLabel.textContent}`);
+  layoutMarkerTags(panel);
 
   els.values.textContent = "";
-  if (panel.series.length === 0) {
+  if (marker.legendHidden || panel.series.length === 0) {
     els.values.style.display = "none";
     return;
   }
@@ -1172,8 +1219,28 @@ function renderMarkersForPanel(panel: PlotPanel): void {
 
     const tag = el("div", "plot-marker-tag");
     tag.style.setProperty("--marker-color", marker.color);
+    tag.tabIndex = 0;
+    tag.setAttribute("role", "group");
+    tag.addEventListener("focusin", () => focusMarker(marker.id));
+    tag.addEventListener("mousedown", (event) => {
+      event.stopPropagation();
+      focusMarker(marker.id);
+      if (event.target === tag || event.target === timeLabel) tag.focus();
+    });
     const timeLabel = el("span", "plot-marker-time");
     tag.appendChild(timeLabel);
+    const refreshLegend = (): void => {
+      for (const panel of state.panels) updateMarkerVisual(panel, marker);
+    };
+    const legendToggle = el("button", "plot-marker-legend-toggle") as HTMLButtonElement;
+    legendToggle.type = "button";
+    legendToggle.addEventListener("mousedown", (event) => event.stopPropagation());
+    legendToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      marker.legendHidden = !marker.legendHidden;
+      refreshLegend();
+    });
+    tag.appendChild(legendToggle);
     const removeBtn = el("button", "plot-marker-remove", "×");
     removeBtn.title = "Remove this marker";
     removeBtn.addEventListener("mousedown", (ev) => ev.stopPropagation());
@@ -1185,12 +1252,51 @@ function renderMarkersForPanel(panel: PlotPanel): void {
 
     const values = el("div", "plot-marker-values");
     values.style.setProperty("--marker-color", marker.color);
+    values.title = "Drag across the marker to move this legend left or right";
+    values.tabIndex = 0;
+    values.addEventListener("focusin", () => focusMarker(marker.id));
+    values.setAttribute("aria-label", "Marker legend. Drag or use left and right arrow keys to change sides.");
+    values.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      event.stopPropagation();
+      marker.legendSide = event.key === "ArrowLeft" ? "left" : "right";
+      refreshLegend();
+    });
+    let dragStartX: number | undefined;
+    values.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      focusMarker(marker.id);
+      dragStartX = event.clientX;
+      values.setPointerCapture(event.pointerId);
+      values.classList.add("dragging-legend");
+    });
+    values.addEventListener("pointermove", (event) => {
+      if (dragStartX == undefined || Math.abs(event.clientX - dragStartX) < 3) return;
+      const offsetSec = state.zeroOffset ? (state.summary?.timeRange[0] ?? 0) : 0;
+      const markerX = chart.over.getBoundingClientRect().left + chart.valToPos(marker.timeSec - offsetSec, "x");
+      const side = event.clientX < markerX ? "left" : "right";
+      if (marker.legendSide !== side) {
+        marker.legendSide = side;
+        refreshLegend();
+      }
+    });
+    const stopLegendDrag = (): void => {
+      dragStartX = undefined;
+      values.classList.remove("dragging-legend");
+    };
+    values.addEventListener("pointerup", stopLegendDrag);
+    values.addEventListener("pointercancel", stopLegendDrag);
+    values.addEventListener("lostpointercapture", stopLegendDrag);
+    values.addEventListener("click", (event) => event.stopPropagation());
 
     chart.over.appendChild(hit);
     chart.over.appendChild(tag);
     chart.over.appendChild(values);
 
-    const els: MarkerEls = { hit, tag, timeLabel, values };
+    const els: MarkerEls = { hit, tag, timeLabel, values, legendToggle };
     panel.markerEls.set(marker.id, els);
     setupMarkerDrag(panel, marker, hit);
     updateMarkerVisual(panel, marker);
@@ -1226,6 +1332,8 @@ function createMarkerAt(timeSec: number): void {
     id: state.nextMarkerId++,
     timeSec,
     color: markerColor(state.markers.length),
+    legendSide: "auto",
+    legendHidden: false,
   });
   renderAllMarkers();
 }

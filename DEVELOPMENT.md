@@ -57,6 +57,5 @@ extending the protocol.
 - Plot panel layouts (and selected series) persisted per file
 - Parameter diff between two logs
 - Downsampling for very large logs; streaming extraction with progress
-- Marker legend should be movable to left/right and hideable
 - A stacked plot mode where multiple plots can be put on a vertically stacked display to save space and show more data on a common timeframe
 - A way to change the displayed units/scale on plots, e.g. change 0.91 to 91%, change m/s to mph, etc.
