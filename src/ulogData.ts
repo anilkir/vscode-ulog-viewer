@@ -277,7 +277,7 @@ function buildTopics(scan: UlogFileScanResult): TopicInfo[] {
       stringFields: stringFields(subscription),
     });
   }
-  return topics.sort((a, b) => a.name.localeCompare(b.name));
+  return topics.sort((a, b) => a.messageName.localeCompare(b.messageName) || a.multiId - b.multiId);
 }
 
 function formatInfoValue(value: FieldPrimitive | FieldPrimitive[]): string {
