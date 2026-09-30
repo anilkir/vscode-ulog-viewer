@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { Filelike } from "@foxglove/ulog";
 import { FileReader } from "@foxglove/ulog/node";
-import { buildSummary, extractTopicColumns, extractTopicStrings, type TopicColumns } from "./ulogData";
+import { summarizeFieldValues, buildSummary, extractTopicColumns, extractTopicStrings, type TopicColumns } from "./ulogData";
 import { scanUlogFile, type UlogFileScanResult } from "./paramScan";
 import { log, logTimed } from "./logger";
 import type {
@@ -375,6 +375,21 @@ export class UlogEditorProvider implements vscode.CustomReadonlyEditorProvider<U
             // look like the loaded view had simply vanished.
             post({ type: "viewRenamed", oldName: message.oldName, newName: result.newName });
             post({ type: "savedViews", views: result.views });
+          }
+          break;
+        }
+        case "getFieldStats": {
+          try {
+            const data = await document.getTopicData(message.msgId);
+            const stats: Record<string, import("./protocol").FieldStats> = Object.create(null);
+            for (const [field, values] of data.columns) {
+              const summary = summarizeFieldValues(values);
+              if (summary) stats[field] = summary;
+            }
+            post({ type: "fieldStats", msgId: message.msgId, stats });
+          } catch (err) {
+            log(`Field statistics failed for msgId=${message.msgId}: ${errorMessage(err)}`);
+            post({ type: "fieldStatsError", msgId: message.msgId });
           }
           break;
         }

@@ -10,6 +10,7 @@ import { MessageType, type FieldPrimitive, type Filelike, type MessageDefinition
 import { scanGpsDump, scanGpsDumpColumns, scanTopicColumns, scanTopicStrings, type UlogFileScanResult } from "./paramScan";
 import type {
   FieldInfo,
+  FieldStats,
   FormatDefinitionInfo,
   LogSummary,
   MessageTypeCount,
@@ -24,6 +25,18 @@ export interface TopicColumns {
   times: Float64Array;
   /** One column per plottable field, same length as `times`. */
   columns: Map<string, Float64Array>;
+}
+
+/** Exact full-log extrema; missing/non-finite values never imply constancy. */
+export function summarizeFieldValues(values: Float64Array): FieldStats | undefined {
+  let min = Infinity, max = -Infinity, validCount = 0;
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue;
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+    validCount++;
+  }
+  return validCount ? { min, max, validCount, sampleCount: values.length } : undefined;
 }
 
 /**

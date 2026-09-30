@@ -10,7 +10,15 @@ try {
   await build({ entryPoints: ["src/quaternion.ts", "src/ulogData.ts"], outdir: dir,
     bundle: true, platform: "node", format: "esm", outExtension: { ".js": ".mjs" } });
   const { quaternionToRpy: convert, quaternionSource } = await import(pathToFileURL(join(dir, "quaternion.mjs")));
-  const { plottableFields, addDerivedRpyColumns } = await import(pathToFileURL(join(dir, "ulogData.mjs")));
+  const { plottableFields, addDerivedRpyColumns, summarizeFieldValues } = await import(pathToFileURL(join(dir, "ulogData.mjs")));
+  assert.deepEqual(summarizeFieldValues(Float64Array.from([42, 42, 42])),
+    {min: 42, max: 42, validCount: 3, sampleCount: 3});
+  assert.deepEqual(summarizeFieldValues(Float64Array.from([1.25, -2.5, 9.75, NaN, Infinity])),
+    {min: -2.5, max: 9.75, validCount: 3, sampleCount: 5});
+  assert.deepEqual(summarizeFieldValues(Float64Array.from([42, NaN, 42])),
+    {min: 42, max: 42, validCount: 2, sampleCount: 3});
+  assert.equal(summarizeFieldValues(new Float64Array()), undefined);
+  assert.equal(summarizeFieldValues(Float64Array.from([NaN, Infinity])), undefined);
   const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-10, `${a} != ${b}`);
   const half = Math.PI / 8;
   for (let axis = 0; axis < 3; axis++) {
@@ -63,7 +71,7 @@ try {
   assert.equal(data.columns.get("q[0]")[3], 0); // raw logged data preserved
   const missing = {times: new Float64Array(1), columns: new Map()};
   assert.throws(() => addDerivedRpyColumns(missing, subscription, new Map()), /missing/);
-  console.log("Quaternion tests passed: rotations, normalization, invalid data, singularities, and schema gates.");
+  console.log("Field statistics and quaternion tests passed: rotations, normalization, invalid data, singularities, and schema gates.");
 } finally {
   await rm(dir, {recursive: true, force: true});
 }

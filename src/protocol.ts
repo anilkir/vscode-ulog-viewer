@@ -5,6 +5,13 @@
  * plus ArrayBuffer (supported natively for engines >= 1.57). No bigint.
  */
 
+export interface FieldStats {
+  min: number;
+  max: number;
+  validCount: number;
+  sampleCount: number;
+}
+
 export interface FieldInfo {
   /** Expanded, plottable field name, e.g. "q[0]" or "z". */
   name: string;
@@ -232,6 +239,7 @@ export interface SavedView {
 export type WebviewToHostMessage =
   | { type: "ready" }
   | { type: "getSeries"; msgId: number; field: string }
+  | { type: "getFieldStats"; msgId: number }
   /** Requests the decoded values of a topic's `char[N]` (string) fields —
    *  sent lazily the first time such a topic is expanded in the sidebar, so
    *  logs whose string topics are never opened pay nothing for them. */
@@ -252,6 +260,8 @@ export type WebviewToHostMessage =
 export type HostToWebviewMessage =
   | { type: "summary"; summary: LogSummary }
   | { type: "loadError"; message: string }
+  | { type: "fieldStats"; msgId: number; stats: Record<string, FieldStats> }
+  | { type: "fieldStatsError"; msgId: number }
   | { type: "savedViews"; views: SavedView[] }
   /** Sent alongside "savedViews" after a successful rename, so the webview
    *  can update anything referring to the view by its old name (e.g. the

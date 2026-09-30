@@ -2166,3 +2166,43 @@ tr.row-selected td {
   white-space: normal;
   pointer-events: none;
 }
+
+.field-btn {
+  display: flex;
+  align-items: baseline;
+  column-gap: 6px;
+}
+
+.field-btn::before {
+  flex: none;
+  margin-right: 0;
+}
+
+.field-name {
+  /* Preserve the name until the unit and value have yielded their space.
+     The cap leaves room for the selection dot and the three gaps. */
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: calc(100% - 28px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-btn .field-type {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-value {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}

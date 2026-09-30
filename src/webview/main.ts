@@ -4,6 +4,7 @@ import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import type {
   FieldInfo,
+  FieldStats,
   HostToWebviewMessage,
   LogMessageInfo,
   LogSummary,
@@ -2457,6 +2458,30 @@ function populateStringsSection(msgId: number, errorMessage?: string): void {
   }
 }
 
+const fieldStatsCache = new Map<number, Record<string, FieldStats>>();
+const pendingFieldStats = new Set<number>();
+
+function ensureFieldStats(msgId: number): void {
+  if (fieldStatsCache.has(msgId) || pendingFieldStats.has(msgId)) return;
+  pendingFieldStats.add(msgId);
+  vscode.postMessage({ type: "getFieldStats", msgId });
+}
+
+function populateFieldStats(): void {
+  for (const button of topicListEl.querySelectorAll<HTMLElement>(".field-btn")) {
+    const valueEl = button.querySelector<HTMLElement>(".field-value");
+    if (!valueEl) continue;
+    const stats = fieldStatsCache.get(Number(button.dataset.msgId))?.[button.dataset.field!];
+    if (!stats) continue;
+    const constant = stats.min === stats.max && stats.validCount === stats.sampleCount;
+    const format = (value: number): string => Number.isInteger(value) ? String(value) : formatNumber(value);
+    valueEl.textContent = constant ? format(stats.min) : `[${format(stats.min)}, ${format(stats.max)}]`;
+    valueEl.classList.toggle("field-range", !constant);
+    valueEl.title = constant ? "Constant throughout the log" :
+      `Full-log min/max (${stats.validCount} valid samples of ${stats.sampleCount})`;
+  }
+}
+
 let derivedTooltip: HTMLElement | undefined;
 function hideDerivedTooltip(): void {
   derivedTooltip?.remove();
@@ -2499,6 +2524,7 @@ function renderTopicList(): void {
           state.expandedTopics.delete(topic.msgId);
         }
       }
+      if (details.open) ensureFieldStats(topic.msgId);
       if (details.open && topic.stringFields.length > 0) {
         ensureStringsFetched(topic.msgId);
       }
@@ -2513,8 +2539,9 @@ function renderTopicList(): void {
       button.dataset.field = field.name;
       button.title = "Click to plot · Shift+click to add every field between the last clicked one and this";
       if (field.derived) button.title += ` · ${field.derived.description}`;
-      button.appendChild(el("span", undefined, label));
+      button.appendChild(el("span", "field-name", label));
       button.appendChild(el("span", "field-type", field.type));
+      button.appendChild(el("span", "field-value"));
       // Shift+click extends the browser's text selection by default —
       // suppress that so range-adding doesn't also paint a selection
       // across the sidebar.
@@ -2633,6 +2660,7 @@ function renderTopicList(): void {
     }
 
     topicListEl.appendChild(details);
+    if (details.open) ensureFieldStats(topic.msgId);
 
     if (stringsSection) {
       renderStringsInto(stringsSection, topic);
@@ -2641,6 +2669,7 @@ function renderTopicList(): void {
       }
     }
   }
+  populateFieldStats();
   refreshFieldButtons();
 }
 
@@ -5699,6 +5728,14 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
       // triggers refreshSavedViewSelect(), state.savedViews already
       // contains a match for this name.
       state.lockedSavedViewName = message.name;
+      break;
+    case "fieldStats":
+      pendingFieldStats.delete(message.msgId);
+      fieldStatsCache.set(message.msgId, message.stats);
+      populateFieldStats();
+      break;
+    case "fieldStatsError":
+      pendingFieldStats.delete(message.msgId);
       break;
     case "series": {
       const adHocKey = seriesKey(message.msgId, message.field);
