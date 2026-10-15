@@ -1,4 +1,5 @@
 import "./style.css";
+import { t } from "../webview/l10n";
 import type { SidebarFileEntry, SidebarToHostMessage, SidebarUpdateMessage } from "../sidebarProtocol";
 
 declare function acquireVsCodeApi(): {
@@ -86,7 +87,7 @@ function renderCard(opts: CardOptions): HTMLElement | undefined {
     const clearBtn = document.createElement("button");
     clearBtn.className = "folder-clear";
     clearBtn.textContent = "✕";
-    clearBtn.title = "Clear this folder";
+    clearBtn.title = t("Clear this folder");
     clearBtn.addEventListener("click", () => vscode.postMessage({ type: "clearFolder" }));
     header.appendChild(clearBtn);
   }
@@ -123,20 +124,21 @@ window.addEventListener("message", (event: MessageEvent<SidebarUpdateMessage>) =
           titleTooltip: message.folderPath,
           icon: FOLDER_ICON,
           entries: message.folder,
-          emptyHint: "No .ulg or .ulog files in this folder.",
+          emptyHint: t("No .ulg or .ulog files in this folder."),
           clearable: true,
         })
       : undefined,
-    renderCard({ title: "Currently Open", icon: OPEN_ICON, entries: message.open }),
-    renderCard({ title: "Recently Opened", icon: CLOCK_ICON, entries: message.recent }),
-    renderCard({ title: "Workspace Files", icon: WORKSPACE_ICON, entries: message.workspace }),
+    renderCard({ title: t("Currently Open"), icon: OPEN_ICON, entries: message.open }),
+    renderCard({ title: t("Recently Opened"), icon: CLOCK_ICON, entries: message.recent }),
+    renderCard({ title: t("Workspace Files"), icon: WORKSPACE_ICON, entries: message.workspace }),
   ].filter((s): s is HTMLElement => s != undefined);
 
   if (sections.length === 0) {
     const hint = document.createElement("div");
     hint.className = "empty-hint";
-    hint.textContent =
-      "No .ulg or .ulog files open, recently opened, or found. Use “Open Folder” to list a folder’s logs.";
+    hint.textContent = t(
+      "No .ulg or .ulog files open, recently opened, or found. Use “Open Folder” to list a folder’s logs.",
+    );
     sectionsEl.appendChild(hint);
     return;
   }

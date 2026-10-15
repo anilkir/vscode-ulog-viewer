@@ -1,0 +1,12 @@
+{
+  "ULog files": "ULog 文件",
+  "Open ULog File": "打开 ULog 文件",
+  "Scan for ULog Files": "扫描 ULog 文件",
+  "Open Folder": "打开文件夹",
+  "Name this plotting view": "为这个绘图视图命名",
+  "e.g. Attitude & Position": "例如：姿态与位置",
+  "Enter a name": "请输入名称",
+  "Delete the saved view \"{name}\"?": "删除已保存的视图“{name}”？",
+  "Delete": "删除",
+  "Rename saved view": "重命名已保存的视图"
+}

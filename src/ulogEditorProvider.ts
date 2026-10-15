@@ -29,9 +29,9 @@ async function saveView(
   panels: SavedViewPanelSpec[],
 ): Promise<{ views: SavedView[]; name: string } | undefined> {
   const name = await vscode.window.showInputBox({
-    prompt: "Name this plotting view",
-    placeHolder: "e.g. Attitude & Position",
-    validateInput: (value) => (value.trim() === "" ? "Enter a name" : undefined),
+    prompt: vscode.l10n.t("Name this plotting view"),
+    placeHolder: vscode.l10n.t("e.g. Attitude & Position"),
+    validateInput: (value) => (value.trim() === "" ? vscode.l10n.t("Enter a name") : undefined),
   });
   if (!name) {
     return undefined;
@@ -68,12 +68,14 @@ async function updateView(
  *  it gets its own confirmation — modal, since a background click dismissing
  *  it should count as "no", not "yes". */
 async function deleteView(globalState: vscode.Memento, name: string): Promise<SavedView[] | undefined> {
+  // The button label doubles as the comparison value — both sides go through
+  // the same l10n key, so they stay equal in any language.
   const confirmed = await vscode.window.showWarningMessage(
-    `Delete the saved view "${name}"?`,
+    vscode.l10n.t('Delete the saved view "{name}"?', { name }),
     { modal: true },
-    "Delete",
+    vscode.l10n.t("Delete"),
   );
-  if (confirmed !== "Delete") {
+  if (confirmed !== vscode.l10n.t("Delete")) {
     return undefined;
   }
   const views = getSavedViews(globalState).filter((v) => v.name !== name);
@@ -94,10 +96,10 @@ async function renameView(
     return undefined;
   }
   const newName = await vscode.window.showInputBox({
-    prompt: "Rename saved view",
+    prompt: vscode.l10n.t("Rename saved view"),
     value: oldName,
     valueSelection: [0, oldName.length],
-    validateInput: (value) => (value.trim() === "" ? "Enter a name" : undefined),
+    validateInput: (value) => (value.trim() === "" ? vscode.l10n.t("Enter a name") : undefined),
   });
   if (!newName || newName.trim() === oldName) {
     return undefined;
@@ -445,7 +447,7 @@ export class UlogEditorProvider implements vscode.CustomReadonlyEditorProvider<U
       webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "dist", file));
     const nonce = getNonce();
     return /* html */ `<!DOCTYPE html>
-<html lang="en">
+<html lang="${vscode.env.language}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">

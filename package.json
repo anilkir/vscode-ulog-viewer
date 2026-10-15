@@ -1,7 +1,7 @@
 {
   "name": "vscode-ulog-viewer",
-  "displayName": "PX4 ULog Viewer",
-  "description": "View PX4 ULog (.ulg) flight logs: log info, parameters, messages and time-series plots.",
+  "displayName": "%displayName%",
+  "description": "%description%",
   "version": "0.0.7",
   "publisher": "anilkir",
   "license": "SEE LICENSE IN LICENSE",
@@ -19,6 +19,7 @@
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
+  "l10n": "./l10n",
   "contributes": {
     "customEditors": [
       {
@@ -48,7 +49,7 @@
       "ulogViewer": [
         {
           "id": "ulogViewer.filesView",
-          "name": "ULog Files",
+          "name": "%view.filesView.name%",
           "type": "webview"
         }
       ]
@@ -56,19 +57,19 @@
     "commands": [
       {
         "command": "ulogViewer.openFile",
-        "title": "Open ULog File",
+        "title": "%command.openFile.title%",
         "icon": "$(folder-opened)",
         "category": "ULog Viewer"
       },
       {
         "command": "ulogViewer.openFolder",
-        "title": "Open Folder of ULog Files",
+        "title": "%command.openFolder.title%",
         "icon": "$(folder)",
         "category": "ULog Viewer"
       },
       {
         "command": "ulogViewer.refreshFiles",
-        "title": "Refresh",
+        "title": "%command.refreshFiles.title%",
         "icon": "$(refresh)",
         "category": "ULog Viewer"
       }

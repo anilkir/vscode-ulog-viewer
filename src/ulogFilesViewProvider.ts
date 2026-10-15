@@ -60,8 +60,8 @@ export function openUlogFile(uri: vscode.Uri, viewColumn?: vscode.ViewColumn): v
 export async function pickAndOpenFile(): Promise<void> {
   const picked = await vscode.window.showOpenDialog({
     canSelectMany: false,
-    filters: { "ULog files": ["ulg", "ulog"] },
-    openLabel: "Open ULog File",
+    filters: { [vscode.l10n.t("ULog files")]: ["ulg", "ulog"] },
+    openLabel: vscode.l10n.t("Open ULog File"),
   });
   if (picked?.[0]) {
     openUlogFile(picked[0]);
@@ -151,7 +151,7 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
       canSelectFiles: false,
       canSelectFolders: true,
       canSelectMany: false,
-      openLabel: "Scan for ULog Files",
+      openLabel: vscode.l10n.t("Scan for ULog Files"),
     });
     if (picked?.[0]) {
       await this.globalState.update(PICKED_FOLDER_KEY, picked[0].toString());
@@ -284,7 +284,7 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
     const distUri = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", file));
     const nonce = getNonce();
     return /* html */ `<!DOCTYPE html>
-<html lang="en">
+<html lang="${vscode.env.language}">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
@@ -293,8 +293,8 @@ export class UlogFilesViewProvider implements vscode.WebviewViewProvider, vscode
 </head>
 <body>
   <div class="actions">
-    <button id="openBtn" class="open-btn">Open ULog File</button>
-    <button id="openFolderBtn" class="open-btn secondary">Open Folder</button>
+    <button id="openBtn" class="open-btn">${vscode.l10n.t("Open ULog File")}</button>
+    <button id="openFolderBtn" class="open-btn secondary">${vscode.l10n.t("Open Folder")}</button>
   </div>
   <div id="sections"></div>
   <script nonce="${nonce}" src="${distUri("sidebar.js")}"></script>
