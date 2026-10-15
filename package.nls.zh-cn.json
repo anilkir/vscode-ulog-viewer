@@ -1,0 +1,8 @@
+{
+  "displayName": "PX4 ULog 日志查看器",
+  "description": "查看 PX4 ULog (.ulg) 飞行日志：日志信息、参数、消息与时间序列图表。",
+  "command.openFile.title": "打开 ULog 文件",
+  "command.openFolder.title": "打开 ULog 文件夹",
+  "command.refreshFiles.title": "刷新",
+  "view.filesView.name": "ULog 文件"
+}

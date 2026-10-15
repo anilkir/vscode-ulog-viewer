@@ -1,5 +1,6 @@
 import { batteryReadingsAt, type ReplayBattery } from "../replayBattery";
 import { quaternionToRpy } from "../quaternion";
+import { t } from "./l10n";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
@@ -482,7 +483,7 @@ function formatWallClock(rawBootRelativeSec: number, decimals: number): string {
     });
     return formatter.format(new Date(epochMs));
   } catch {
-    return "invalid timezone";
+    return t("invalid timezone");
   }
 }
 
@@ -525,11 +526,11 @@ function formatWallClockDate(rawBootRelativeSec: number): string {
  *  of who's reading it or where. */
 function formatUtcStartTime(summary: LogSummary): string {
   if (summary.utcOffsetUsec == undefined) {
-    return summary.utcUnavailableReason ?? "Not available (no GPS UTC reference in this log)";
+    return summary.utcUnavailableReason ?? t("Not available (no GPS UTC reference in this log)");
   }
   const epochMs = (summary.timeRange[0] * US_PER_SEC + summary.utcOffsetUsec) / 1000;
   if (!Number.isFinite(epochMs)) {
-    return "Not available (no GPS UTC reference in this log)";
+    return t("Not available (no GPS UTC reference in this log)");
   }
   return `${new Date(epochMs).toISOString().replace("T", " ").replace("Z", "")} UTC`;
 }
@@ -654,12 +655,12 @@ function setPlotStatus(text: string): void {
 let stickyPlotStatus = "";
 
 function updatePlotStatus(): void {
-  setPlotStatus(state.pending.size > 0 ? "Loading data…" : stickyPlotStatus);
+  setPlotStatus(state.pending.size > 0 ? t("Loading data…") : stickyPlotStatus);
 }
 
 function updateTargetLabel(): void {
   const index = state.panels.findIndex((p) => p.id === state.focusedPanelId);
-  targetLabelEl.textContent = index >= 0 ? `Adding to Plot ${index + 1}` : "";
+  targetLabelEl.textContent = index >= 0 ? t("Adding to Plot {index}", { index: index + 1 }) : "";
 }
 
 function computeChartSize(panel: PlotPanel): { width: number; height: number } {
@@ -697,7 +698,7 @@ function resizeAllCharts(): void {
 function renderPanelChips(panel: PlotPanel): void {
   panel.chipsEl.textContent = "";
   if (panel.series.length === 0) {
-    panel.chipsEl.appendChild(el("span", "plot-panel-hint", "No fields selected"));
+    panel.chipsEl.appendChild(el("span", "plot-panel-hint", t("No fields selected")));
     return;
   }
   for (const s of panel.series) {
@@ -706,7 +707,7 @@ function renderPanelChips(panel: PlotPanel): void {
     chip.appendChild(el("span", "series-chip-dot"));
     chip.appendChild(el("span", "series-chip-label", s.label));
     const removeBtn = el("button", "series-chip-remove", "×");
-    removeBtn.title = `Remove ${s.label}`;
+    removeBtn.title = t("Remove {label}", { label: s.label });
     removeBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       removeSeriesFromPanel(panel, s.key);
@@ -727,7 +728,7 @@ function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
   if (panel.series.length === 0) {
     panel.chartHostEl.querySelector(".plot-empty")?.remove();
     panel.chartHostEl.appendChild(
-      el("div", "plot-empty", "Select fields from the topic list on the left to plot them."),
+      el("div", "plot-empty", t("Select fields from the topic list on the left to plot them.")),
     );
     return;
   }
@@ -761,7 +762,7 @@ function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
     scales: { x: { time: false }, y: { auto: false } },
     series: [
       {
-        label: `time (${unitLabel})`,
+        label: t("time ({unit})", { unit: unitLabel }),
         value: (_u, v) => (v == null ? "—" : formatPlotTime(v, unit, 3)),
       },
       ...panel.series.map((s) => ({
@@ -1037,7 +1038,7 @@ function updateMarkerVisual(panel: PlotPanel, marker: Marker): void {
     return;
   }
   els.legendToggle.innerHTML = marker.legendHidden ? ICON_EYE_HIDDEN : ICON_EYE;
-  els.legendToggle.title = marker.legendHidden ? "Show marker legend" : "Hide marker legend";
+  els.legendToggle.title = marker.legendHidden ? t("Show marker legend") : t("Hide marker legend");
   els.legendToggle.setAttribute("aria-label", els.legendToggle.title);
   els.legendToggle.setAttribute("aria-expanded", String(!marker.legendHidden));
   const offsetSec = state.zeroOffset ? (state.summary?.timeRange[0] ?? 0) : 0;
@@ -1072,7 +1073,7 @@ function updateMarkerVisual(panel: PlotPanel, marker: Marker): void {
   els.tag.style.left = `${px}px`;
   els.values.style.left = `${px}px`;
   els.timeLabel.textContent = formatPlotTime(displayTime, state.timeUnit, 3);
-  els.tag.setAttribute("aria-label", `Time marker at ${els.timeLabel.textContent}`);
+  els.tag.setAttribute("aria-label", t("Time marker at {time}", { time: els.timeLabel.textContent }));
   layoutMarkerTags(panel);
 
   els.values.textContent = "";
@@ -1215,7 +1216,7 @@ function renderMarkersForPanel(panel: PlotPanel): void {
   for (const marker of state.markers) {
     const hit = el("div", "plot-marker-hit");
     hit.style.setProperty("--marker-color", marker.color);
-    hit.title = "Drag to move";
+    hit.title = t("Drag to move");
 
     const tag = el("div", "plot-marker-tag");
     tag.style.setProperty("--marker-color", marker.color);
@@ -1242,7 +1243,7 @@ function renderMarkersForPanel(panel: PlotPanel): void {
     });
     tag.appendChild(legendToggle);
     const removeBtn = el("button", "plot-marker-remove", "×");
-    removeBtn.title = "Remove this marker";
+    removeBtn.title = t("Remove this marker");
     removeBtn.addEventListener("mousedown", (ev) => ev.stopPropagation());
     removeBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -1252,10 +1253,10 @@ function renderMarkersForPanel(panel: PlotPanel): void {
 
     const values = el("div", "plot-marker-values");
     values.style.setProperty("--marker-color", marker.color);
-    values.title = "Drag across the marker to move this legend left or right";
+    values.title = t("Drag across the marker to move this legend left or right");
     values.tabIndex = 0;
     values.addEventListener("focusin", () => focusMarker(marker.id));
-    values.setAttribute("aria-label", "Marker legend. Drag or use left and right arrow keys to change sides.");
+    values.setAttribute("aria-label", t("Marker legend. Drag or use left and right arrow keys to change sides."));
     values.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
@@ -1612,21 +1613,21 @@ function createPanel(): PlotPanel {
   const headerEl = el("div", "plot-panel-header");
   const gripHandle = el("span", "plot-panel-grip");
   gripHandle.innerHTML = ICON_GRIP;
-  gripHandle.title = "Drag to reorder";
-  const indexLabel = el("span", "plot-panel-index", `Plot ${state.panels.length + 1}`);
+  gripHandle.title = t("Drag to reorder");
+  const indexLabel = el("span", "plot-panel-index", t("Plot {index}", { index: state.panels.length + 1 }));
   const chipsEl = el("div", "plot-panel-chips");
 
   const yGroup = el("div", "plot-panel-yrange");
-  yGroup.title = "Y-axis range";
-  const minField = createYRangeField("min");
-  const maxField = createYRangeField("max");
+  yGroup.title = t("Y-axis range");
+  const minField = createYRangeField(t("min"));
+  const maxField = createYRangeField(t("max"));
   const { wrap: yMinWrap, input: yMinInput } = minField;
   const { wrap: yMaxWrap, input: yMaxInput } = maxField;
   yGroup.appendChild(yMinWrap);
   yGroup.appendChild(yMaxWrap);
 
   const removeBtn = el("button", "plot-panel-remove", "×");
-  removeBtn.title = "Remove this plot";
+  removeBtn.title = t("Remove this plot");
   removeBtn.addEventListener("click", (ev) => {
     ev.stopPropagation();
     removePanel(id);
@@ -1647,7 +1648,7 @@ function createPanel(): PlotPanel {
   chartHostEl.appendChild(chartMountEl);
 
   const heightResizer = el("div", "plot-panel-resizer");
-  heightResizer.title = "Drag to resize height";
+  heightResizer.title = t("Drag to resize height");
 
   containerEl.appendChild(headerEl);
   containerEl.appendChild(chartHostEl);
@@ -1668,7 +1669,7 @@ function createPanel(): PlotPanel {
     markerEls: new Map(),
     lastLegendHeight: 0,
   };
-  const autoBtn = makeIconButton(ICON_AUTORANGE, "Auto-range Y axis (±20%)", () => autoRangeY(panel));
+  const autoBtn = makeIconButton(ICON_AUTORANGE, t("Auto-range Y axis (±20%)"), () => autoRangeY(panel));
   yGroup.appendChild(autoBtn);
   yMinInput.addEventListener("change", () => handleYRangeInputChange(panel));
   yMaxInput.addEventListener("change", () => handleYRangeInputChange(panel));
@@ -1687,7 +1688,7 @@ function createPanel(): PlotPanel {
       const clientX = ev.clientX;
       const clientY = ev.clientY;
       items.push({
-        label: "Add Marker Here",
+        label: t("Add Marker Here"),
         onClick: () => {
           const rect = chart.over.getBoundingClientRect();
           const px = Math.min(rect.width, Math.max(0, clientX - rect.left));
@@ -1696,7 +1697,7 @@ function createPanel(): PlotPanel {
         },
       });
     }
-    items.push({ label: "Copy Plot as Image", onClick: () => void copyPlotAsImage(panel) });
+    items.push({ label: t("Copy Plot as Image"), onClick: () => void copyPlotAsImage(panel) });
     showContextMenu(ev.clientX, ev.clientY, items);
   });
 
@@ -1744,7 +1745,7 @@ function renumberPanels(): void {
   state.panels.forEach((panel, i) => {
     const label = panel.headerEl.querySelector(".plot-panel-index");
     if (label) {
-      label.textContent = `Plot ${i + 1}`;
+      label.textContent = t("Plot {index}", { index: i + 1 });
     }
   });
 }
@@ -1861,7 +1862,7 @@ function toggleField(topic: TopicInfo, field: string): void {
     return;
   }
   if (!requestFieldAdd(panel, topic.msgId, field)) {
-    setPlotStatus(`Plot limit of ${MAX_SERIES_PER_PANEL} series reached — remove one first.`);
+    setPlotStatus(t("Plot limit of {max} series reached — remove one first.", { max: MAX_SERIES_PER_PANEL }));
     return;
   }
   updatePlotStatus();
@@ -1929,7 +1930,9 @@ function loadSavedView(view: SavedView): void {
     }
   }
   stickyPlotStatus =
-    missing > 0 ? `Loaded "${view.name}" — ${missing} series not found in this log.` : `Loaded "${view.name}".`;
+    missing > 0
+      ? t("Loaded \"{name}\" — {count} series not found in this log.", { name: view.name, count: missing })
+      : t("Loaded \"{name}\".", { name: view.name });
   updatePlotStatus();
 }
 
@@ -2008,8 +2011,8 @@ function isLoadedViewModified(): boolean {
 function refreshSaveViewArea(): void {
   saveAreaEl.textContent = "";
   if (!state.lockedSavedViewName) {
-    const saveViewBtn = el("button", undefined, "Save View");
-    saveViewBtn.title = "Save the current plots (panels + series) as a reusable named view";
+    const saveViewBtn = el("button", undefined, t("Save View"));
+    saveViewBtn.title = t("Save the current plots (panels + series) as a reusable named view");
     saveViewBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "saveView", panels: captureCurrentView() });
     });
@@ -2018,15 +2021,15 @@ function refreshSaveViewArea(): void {
   }
   if (isLoadedViewModified()) {
     const lockedName = state.lockedSavedViewName;
-    const updateBtn = el("button", undefined, "Update View");
-    updateBtn.title = `Save these changes back to "${lockedName}"`;
+    const updateBtn = el("button", undefined, t("Update View"));
+    updateBtn.title = t("Save these changes back to \"{name}\"", { name: lockedName });
     updateBtn.addEventListener("click", () => {
       vscode.postMessage({ type: "updateView", name: lockedName, panels: captureCurrentView() });
     });
     saveAreaEl.appendChild(updateBtn);
   }
-  const saveAsNewBtn = el("button", undefined, "Save as New");
-  saveAsNewBtn.title = "Save the current plots as a new, separately named view";
+  const saveAsNewBtn = el("button", undefined, t("Save as New"));
+  saveAsNewBtn.title = t("Save the current plots as a new, separately named view");
   saveAsNewBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "saveView", panels: captureCurrentView() });
   });
@@ -2056,7 +2059,7 @@ function refreshSavedViewSelect(): void {
   const placeholder = el(
     "option",
     undefined,
-    state.savedViews.length === 0 ? "No saved views yet" : "Select a view",
+    state.savedViews.length === 0 ? t("No saved views yet") : t("Select a view"),
   ) as HTMLOptionElement;
   placeholder.value = "";
   savedViewSelect.appendChild(placeholder);
@@ -2080,7 +2083,7 @@ function renderManageViewsList(): void {
   }
   manageViewsListEl.textContent = "";
   if (state.savedViews.length === 0) {
-    manageViewsListEl.appendChild(el("div", "manage-views-empty", "No saved views yet."));
+    manageViewsListEl.appendChild(el("div", "manage-views-empty", t("No saved views yet.")));
     return;
   }
   for (const view of state.savedViews) {
@@ -2089,15 +2092,15 @@ function renderManageViewsList(): void {
     const nameGroup = el("div", "manage-view-name-group");
     nameGroup.appendChild(el("span", "manage-view-name", view.name));
     nameGroup.appendChild(
-      el("span", "manage-view-meta", `${panelCount} plot${panelCount === 1 ? "" : "s"}`),
+      el("span", "manage-view-meta", t("{count} plots", { count: panelCount })),
     );
     row.appendChild(nameGroup);
     const actions = el("div", "manage-view-actions");
-    const renameBtn = makeIconButton(ICON_PENCIL, `Rename "${view.name}"`, () => {
+    const renameBtn = makeIconButton(ICON_PENCIL, t("Rename \"{name}\"", { name: view.name }), () => {
       vscode.postMessage({ type: "renameView", oldName: view.name });
     });
     actions.appendChild(renameBtn);
-    const deleteBtn = makeIconButton(ICON_TRASH, `Delete "${view.name}"`, () => {
+    const deleteBtn = makeIconButton(ICON_TRASH, t("Delete \"{name}\"", { name: view.name }), () => {
       vscode.postMessage({ type: "deleteView", name: view.name });
     });
     deleteBtn.classList.add("manage-view-delete");
@@ -2131,7 +2134,7 @@ function showConfirmDialog(message: string, confirmLabel: string): Promise<boole
     });
     dialog.appendChild(el("div", "confirm-dialog-body", message));
     const actions = el("div", "confirm-dialog-actions");
-    const cancelBtn = el("button", undefined, "Cancel");
+    const cancelBtn = el("button", undefined, t("Cancel"));
     cancelBtn.addEventListener("click", () => close(false));
     actions.appendChild(cancelBtn);
     const confirmBtn = el("button", "primary", confirmLabel);
@@ -2155,9 +2158,9 @@ function openManageViewsDialog(): void {
   });
   const dialog = el("div", "modal-dialog");
   const header = el("div", "modal-header");
-  header.appendChild(el("h3", "modal-title", "Manage Saved Views"));
+  header.appendChild(el("h3", "modal-title", t("Manage Saved Views")));
   const closeBtn = el("button", "icon-btn modal-close-btn", "×");
-  closeBtn.title = "Close";
+  closeBtn.title = t("Close");
   header.appendChild(closeBtn);
   dialog.appendChild(header);
 
@@ -2277,7 +2280,7 @@ function selectFieldRange(target: HTMLElement): boolean {
       continue;
     }
     if (!requestFieldAdd(panel, Number(button.dataset.msgId), field)) {
-      setPlotStatus(`Plot limit of ${MAX_SERIES_PER_PANEL} series reached — the rest of the range was skipped.`);
+      setPlotStatus(t("Plot limit of {max} series reached — the rest of the range was skipped.", { max: MAX_SERIES_PER_PANEL }));
       break;
     }
   }
@@ -2381,7 +2384,7 @@ function buildDevices(data: TopicStrings, idFields: string[]): DeviceEntry[] {
  *  vs. an unordered set of distinct values in the aggregate fallback view. */
 function appendFieldValues(wrap: HTMLElement, vals: FieldValueCount[], asTransition: boolean): void {
   if (vals.length === 0) {
-    wrap.appendChild(el("span", "string-field-value string-empty", "(empty)"));
+    wrap.appendChild(el("span", "string-field-value string-empty", t("(empty)")));
     return;
   }
   const multiple = vals.length > 1;
@@ -2389,7 +2392,7 @@ function appendFieldValues(wrap: HTMLElement, vals: FieldValueCount[], asTransit
     const empty = value === "";
     const cls =
       "string-field-value" + (isChange ? " string-change" : "") + (empty ? " string-empty" : "");
-    const v = el("span", cls, empty ? "(empty)" : value);
+    const v = el("span", cls, empty ? t("(empty)") : value);
     if (!empty) {
       v.title = value;
       // Values are truncated to one line by default (a top_metrics process
@@ -2413,7 +2416,7 @@ function appendFieldValues(wrap: HTMLElement, vals: FieldValueCount[], asTransit
   vals.slice(0, MAX_SHOWN_STRING_VALUES).forEach((entry, i) => appendOne(entry, asTransition && i > 0));
   const hidden = vals.slice(MAX_SHOWN_STRING_VALUES);
   if (hidden.length > 0) {
-    const more = el("button", "string-more", `+${hidden.length} more`);
+    const more = el("button", "string-more", t("+{count} more", { count: hidden.length }));
     more.addEventListener("click", () => {
       more.remove();
       hidden.forEach((entry) => appendOne(entry, asTransition));
@@ -2460,7 +2463,7 @@ function renderRecordView(section: HTMLElement, data: TopicStrings, idFields: st
   devices.slice(0, MAX_SHOWN_STRING_VALUES).forEach((device, i) => renderDevice(device, i));
   const hidden = devices.slice(MAX_SHOWN_STRING_VALUES);
   if (hidden.length > 0) {
-    const more = el("button", "string-more", `+${hidden.length} more device${hidden.length > 1 ? "s" : ""}`);
+    const more = el("button", "string-more", t("+{count} more devices", { count: hidden.length }));
     more.addEventListener("click", () => {
       hidden.forEach((device, i) => renderDevice(device, MAX_SHOWN_STRING_VALUES + i, more));
       more.remove();
@@ -2500,15 +2503,15 @@ function renderStringsInto(section: HTMLElement, topic: TopicInfo, errorMessage?
   // (one most-frequent-first frame list per direction; the device-grouping
   // heuristic below has no meaning for it).
   const isGpsDump = topic.messageName === "gps_dump";
-  section.appendChild(el("div", "string-divider", isGpsDump ? "gps protocol" : "strings"));
+  section.appendChild(el("div", "string-divider", isGpsDump ? t("gps protocol") : t("strings")));
 
   if (errorMessage) {
-    section.appendChild(el("div", "string-note", `Couldn't read values: ${errorMessage}`));
+    section.appendChild(el("div", "string-note", t("Couldn't read values: {error}", { error: errorMessage })));
     return;
   }
   const data = state.stringsCache.get(topic.msgId);
   if (!data) {
-    section.appendChild(el("div", "string-note", state.pendingStrings.has(topic.msgId) ? "Reading…" : "…"));
+    section.appendChild(el("div", "string-note", state.pendingStrings.has(topic.msgId) ? t("Reading…") : "…"));
     return;
   }
 
@@ -2538,10 +2541,12 @@ function renderStringsInto(section: HTMLElement, topic: TopicInfo, errorMessage?
       el(
         "div",
         "string-note",
-        "Only message types and counts are decoded here. To inspect the messages' contents, extract the raw " +
+        t(
+          "Only message types and counts are decoded here. To inspect the messages' contents, extract the raw " +
           "streams with pyulog's ulog_extract_gps_dump and open them in a protocol tool (e.g. u-blox u-center). " +
           "This topic's plottable fields show each message type's arrival gaps — plot one to spot periods " +
           "where it stopped arriving.",
+        ),
       ),
     );
   }
@@ -2551,7 +2556,10 @@ function renderStringsInto(section: HTMLElement, topic: TopicInfo, errorMessage?
       el(
         "div",
         "string-note",
-        `Showing first ${data.records.length} distinct records of ${data.sampleCount.toLocaleString()} samples.`,
+        t("Showing first {records} distinct records of {samples} samples.", {
+          records: data.records.length,
+          samples: data.sampleCount.toLocaleString(),
+        }),
       ),
     );
   }
@@ -2586,8 +2594,11 @@ function populateFieldStats(): void {
     const format = (value: number): string => Number.isInteger(value) ? String(value) : formatNumber(value);
     valueEl.textContent = constant ? format(stats.min) : `[${format(stats.min)}, ${format(stats.max)}]`;
     valueEl.classList.toggle("field-range", !constant);
-    valueEl.title = constant ? "Constant throughout the log" :
-      `Full-log min/max (${stats.validCount} valid samples of ${stats.sampleCount})`;
+    valueEl.title = constant ? t("Constant throughout the log") :
+      t("Full-log min/max ({valid} valid samples of {total})", {
+        valid: stats.validCount,
+        total: stats.sampleCount,
+      });
   }
 }
 
@@ -2646,8 +2657,8 @@ function renderTopicList(): void {
       }
       button.dataset.msgId = String(topic.msgId);
       button.dataset.field = field.name;
-      button.title = "Click to plot · Shift+click to add every field between the last clicked one and this";
-      if (field.derived) button.title += ` · ${field.derived.description}`;
+      button.title = t("Click to plot · Shift+click to add every field between the last clicked one and this");
+      if (field.derived) button.title += ` · ${t(field.derived.description)}`;
       button.appendChild(el("span", "field-name", label));
       button.appendChild(el("span", "field-type", field.type));
       button.appendChild(el("span", "field-value"));
@@ -2702,16 +2713,16 @@ function renderTopicList(): void {
       // behind a closed drop-down — mirrors the topic-level rule above.
       groupDetails.open = filter !== "" && !topicMatches ? true : state.expandedFieldGroups.has(groupKey);
       const groupSummary = el("summary");
-      groupSummary.appendChild(el("span", undefined, entry));
+      groupSummary.appendChild(el("span", undefined, t(entry)));
       const derivedInfo = group[0]?.derived;
       if (derivedInfo) {
         groupDetails.classList.add("derived-field-group");
         const info = el("button", "derived-info", "ⓘ");
         info.type = "button";
-        info.setAttribute("aria-label", "About computed RPY angles");
+        info.setAttribute("aria-label", t("About computed RPY angles"));
         const showTooltip = (): void => {
           hideDerivedTooltip();
-          const tooltip = el("div", "derived-tooltip", derivedInfo.description);
+          const tooltip = el("div", "derived-tooltip", t(derivedInfo.description));
           tooltip.id = "derived-rpy-tooltip";
           tooltip.setAttribute("role", "tooltip");
           info.setAttribute("aria-describedby", tooltip.id);
@@ -2751,13 +2762,15 @@ function renderTopicList(): void {
       });
       const groupList = el("div", "field-list");
       for (const field of group) {
-        groupList.appendChild(makeFieldButton(field, field.derived?.label ?? field.name.slice(entry.length + 1)));
+        groupList.appendChild(
+          makeFieldButton(field, t(field.derived?.label ?? field.name.slice(entry.length + 1))),
+        );
       }
       groupDetails.appendChild(groupList);
       fieldList.appendChild(groupDetails);
     }
     if (matchingFields.length === 0 && matchingStrings.length === 0) {
-      fieldList.appendChild(el("div", "field-type", "no plottable fields"));
+      fieldList.appendChild(el("div", "field-type", t("no plottable fields")));
     }
     details.appendChild(fieldList);
 
@@ -3051,7 +3064,7 @@ function showContextMenu(x: number, y: number, items: { label: string; onClick: 
 async function copyPlotAsImage(panel: PlotPanel): Promise<void> {
   const chart = panel.chart;
   if (!chart) {
-    setPlotStatus("Nothing to copy — add a field to this plot first.");
+    setPlotStatus(t("Nothing to copy — add a field to this plot first."));
     return;
   }
   const sourceCanvas = chart.ctx.canvas;
@@ -3065,7 +3078,7 @@ async function copyPlotAsImage(panel: PlotPanel): Promise<void> {
   exportCanvas.height = sourceCanvas.height + Math.round(legendHeightCss * dpr);
   const ctx = exportCanvas.getContext("2d");
   if (!ctx) {
-    setPlotStatus("Couldn't render this plot to an image.");
+    setPlotStatus(t("Couldn't render this plot to an image."));
     return;
   }
 
@@ -3094,14 +3107,14 @@ async function copyPlotAsImage(panel: PlotPanel): Promise<void> {
 
   exportCanvas.toBlob(async (blob) => {
     if (!blob) {
-      setPlotStatus("Couldn't render this plot to an image.");
+      setPlotStatus(t("Couldn't render this plot to an image."));
       return;
     }
     try {
       await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      setPlotStatus("Plot copied to clipboard as an image.");
+      setPlotStatus(t("Plot copied to clipboard as an image."));
     } catch {
-      setPlotStatus("Couldn't copy the image — this VS Code/OS combination may not support it from a webview.");
+      setPlotStatus(t("Couldn't copy the image — this VS Code/OS combination may not support it from a webview."));
     }
   }, "image/png");
 }
@@ -3246,7 +3259,7 @@ function drawAttitudeIndicator(canvas: HTMLCanvasElement, rollRad: number, pitch
     ctx.fillStyle = resolveColor("var(--vscode-descriptionForeground)");
     ctx.textAlign = "center";
     ctx.font = "12px sans-serif";
-    ctx.fillText("Attitude unavailable", size / 2, size / 2);
+    ctx.fillText(t("Attitude unavailable"), size / 2, size / 2);
     return;
   }
   const roll = rollRad;
@@ -3650,7 +3663,7 @@ const NAV_STATE_NAMES: Record<number, string> = {
 };
 
 function navStateLabel(value: number): string {
-  return NAV_STATE_NAMES[value] ?? `Mode ${value}`;
+  return NAV_STATE_NAMES[value] ?? t("Mode {value}", { value });
 }
 
 /** Last sample where the local-frame home position was actually valid —
@@ -3829,7 +3842,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   } = data;
 
   if (times.length === 0) {
-    pane.appendChild(el("div", "centered-note", "vehicle_local_position has no data points in this log."));
+    pane.appendChild(el("div", "centered-note", t("vehicle_local_position has no data points in this log.")));
     return;
   }
 
@@ -3857,11 +3870,11 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   })();
 
   const toolbar = el("div", "pane-toolbar replay-toolbar");
-  const playBtn = el("button", undefined, "▶ Play") as HTMLButtonElement;
-  const stopBtn = el("button", undefined, "⏹ Stop") as HTMLButtonElement;
+  const playBtn = el("button", undefined, t("▶ Play")) as HTMLButtonElement;
+  const stopBtn = el("button", undefined, t("⏹ Stop")) as HTMLButtonElement;
   toolbar.appendChild(playBtn);
   toolbar.appendChild(stopBtn);
-  toolbar.appendChild(el("span", undefined, "Speed:"));
+  toolbar.appendChild(el("span", undefined, t("Speed:")));
   const speedSelect = el("select", "replay-speed-select") as HTMLSelectElement;
   for (const speed of REPLAY_SPEED_OPTIONS) {
     const option = el("option", undefined, `${speed}x`) as HTMLOptionElement;
@@ -3877,8 +3890,8 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   slider.step = "1";
   slider.value = "0";
   if (armIndex != undefined) {
-    const armTrimBtn = el("button", undefined, "Skip Pre-Arm") as HTMLButtonElement;
-    armTrimBtn.title = "Trim the slider to start at the moment the vehicle armed";
+    const armTrimBtn = el("button", undefined, t("Skip Pre-Arm")) as HTMLButtonElement;
+    armTrimBtn.title = t("Trim the slider to start at the moment the vehicle armed");
     let armTrimmed = false;
     armTrimBtn.addEventListener("click", () => {
       armTrimmed = !armTrimmed;
@@ -3909,7 +3922,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   let clockValueEl: HTMLElement | undefined;
   if (state.summary?.utcOffsetUsec != undefined) {
     const clockLabel = el("span", "replay-clock-label");
-    clockLabel.title = "Wall-clock time of the current frame (from this log's GPS), in the timezone at right";
+    clockLabel.title = t("Wall-clock time of the current frame (from this log's GPS), in the timezone at right");
     const clockIcon = el("span", "replay-clock-icon");
     clockIcon.innerHTML = ICON_CLOCK;
     clockLabel.appendChild(clockIcon);
@@ -3917,8 +3930,8 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     clockLabel.appendChild(clockValueEl);
     toolbar.appendChild(clockLabel);
     const tzField = el("label", "timezone-field");
-    tzField.title = "Timezone for the replay clock — shared with the Data and Messages tabs";
-    tzField.appendChild(el("span", "timezone-field-label", "TZ:"));
+    tzField.title = t("Timezone for the replay clock — shared with the Data and Messages tabs");
+    tzField.appendChild(el("span", "timezone-field-label", t("TZ:")));
     const tzSelect = el("select", "timezone-select") as HTMLSelectElement;
     for (const tz of listTimeZones()) {
       const option = el("option", undefined, tz) as HTMLOptionElement;
@@ -3934,7 +3947,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     toolbar.appendChild(tzField);
   }
 
-  toolbar.appendChild(el("span", undefined, "scroll to zoom · drag to pan · double-click to reset"));
+  toolbar.appendChild(el("span", undefined, t("scroll to zoom · drag to pan · double-click to reset")));
   pane.appendChild(toolbar);
 
   const canvasWrap = el("div", "replay-canvas-wrap");
@@ -3946,8 +3959,8 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
 
   // Small HUD-style overlay for telemetry that isn't itself a position —
   // each row/chip only appears if this log actually has the data for it.
-  const armedChip = el("span", "badge replay-armed-badge", "DISARMED");
-  const landedChip = el("span", "badge replay-landed-badge", "ON GROUND");
+  const armedChip = el("span", "badge replay-armed-badge", t("DISARMED"));
+  const landedChip = el("span", "badge replay-landed-badge", t("ON GROUND"));
   const modeChip = el("span", "badge replay-mode-badge");
 
   // A small aligned label/value grid reads much better than one long joined
@@ -3976,7 +3989,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   // climb rate (vertical) — both derived from the local-position velocity.
   const speed = makeKvGrid();
   const groundSpeedValueEl = vx && vy ? speed.add("GS") : undefined;
-  const climbValueEl = vz ? speed.add("Climb") : undefined;
+  const climbValueEl = vz ? speed.add(t("Climb")) : undefined;
 
   const batteryCards = batteries.map((battery) => {
     const grid = makeKvGrid();
@@ -4023,7 +4036,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   }
   addCard(undefined, stateRow.children.length > 0 ? [stateRow] : []);
 
-  addCard("Altitude", alt.grid.children.length > 0 ? [alt.grid] : []);
+  addCard(t("Altitude"), alt.grid.children.length > 0 ? [alt.grid] : []);
 
   const speedChildren: HTMLElement[] = [];
   if (speed.grid.children.length > 0) {
@@ -4031,15 +4044,15 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   }
   if (airspeed) {
     const airspeedRow = el("div", "replay-status-row replay-airspeed-row");
-    airspeedRow.appendChild(el("span", "replay-airspeed-key", "Airspeed"));
+    airspeedRow.appendChild(el("span", "replay-airspeed-key", t("Airspeed")));
     airspeedRow.appendChild(airspeedValueEl);
     airspeedRow.appendChild(el("span", "replay-airspeed-unit", "m/s"));
     speedChildren.push(airspeedRow);
   }
-  addCard("Speed", speedChildren);
+  addCard(t("Speed"), speedChildren);
 
   for (const card of batteryCards) {
-    addCard(batteryCards.length === 1 ? "Battery" : card.battery.name,
+    addCard(batteryCards.length === 1 ? t("Battery") : card.battery.name,
       card.grid.children.length > 0 ? [card.grid] : []);
   }
 
@@ -4250,7 +4263,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
 
     if (home) {
       const [hx, hy] = toScreen(home.x, home.y);
-      drawMarker(ctx, hx, hy, "diamond", 6, resolveColor("var(--ulog-series-4)"), "Home", nextLabelSlot(hx, hy));
+      drawMarker(ctx, hx, hy, "diamond", 6, resolveColor("var(--ulog-series-4)"), t("Home"), nextLabelSlot(hx, hy));
     }
     const mt = mapTransform;
     if (mt) {
@@ -4373,12 +4386,12 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
 
     if (armed) {
       const isArmed = atOrBefore(armed) === 1;
-      armedChip.textContent = isArmed ? "ARMED" : "DISARMED";
+      armedChip.textContent = isArmed ? t("ARMED") : t("DISARMED");
       armedChip.classList.toggle("armed", isArmed);
     }
     if (landed) {
       const isLanded = atOrBefore(landed) === 1;
-      landedChip.textContent = isLanded ? "ON GROUND" : "IN AIR";
+      landedChip.textContent = isLanded ? t("ON GROUND") : t("IN AIR");
       landedChip.classList.toggle("in-air", !isLanded);
     }
   };
@@ -4460,7 +4473,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
 
   const pausePlayback = () => {
     isPlaying = false;
-    playBtn.textContent = "▶ Play";
+    playBtn.textContent = t("▶ Play");
     playBtn.classList.remove("active");
     if (rafId != undefined) {
       cancelAnimationFrame(rafId);
@@ -4484,7 +4497,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
       return;
     }
     isPlaying = true;
-    playBtn.textContent = "⏸ Pause";
+    playBtn.textContent = t("⏸ Pause");
     playBtn.classList.add("active");
     const currentIndex = Number(slider.value);
     reanchor(currentIndex >= times.length - 1 ? Number(slider.min) : currentIndex);
@@ -4522,7 +4535,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
   const topic = findTopic(summary, "vehicle_local_position");
   if (!topic) {
     pane.appendChild(
-      el("div", "centered-note", "No vehicle_local_position data in this log — nothing to replay."),
+      el("div", "centered-note", t("No vehicle_local_position data in this log — nothing to replay.")),
     );
     return pane;
   }
@@ -4532,7 +4545,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
       el(
         "div",
         "centered-note",
-        "This log's vehicle_local_position doesn't have x/y fields — nothing to replay.",
+        t("This log's vehicle_local_position doesn't have x/y fields — nothing to replay."),
       ),
     );
     return pane;
@@ -4581,7 +4594,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
   // NAV_ACC_RAD changed mid-flight.
   const hasAcceptanceRadius = spTripletTopic?.fields.some((f) => f.name === "current.acceptance_radius") ?? false;
 
-  const loadingNote = el("div", "centered-note", "Loading flight path…");
+  const loadingNote = el("div", "centered-note", t("Loading flight path…"));
   pane.appendChild(loadingNote);
 
   Promise.all([
@@ -4612,7 +4625,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
         fetchOptionalSeries(batteryTopic, "current_a"),
         fetchOptionalSeries(batteryTopic, "connected"),
       ]);
-      return { name: `Battery [${batteryTopic.multiId}]`, remaining, voltage, current, connected };
+      return { name: t("Battery [{id}]", { id: batteryTopic.multiId }), remaining, voltage, current, connected };
     })).then((batteries) => batteries.filter((b) => b.remaining || b.voltage || b.current)),
     hasHomeLocal
       ? Promise.all([
@@ -4707,7 +4720,7 @@ function buildReplayPane(summary: LogSummary): HTMLElement {
       },
     )
     .catch((message: string) => {
-      loadingNote.textContent = `Failed to load flight path: ${message}`;
+      loadingNote.textContent = t("Failed to load flight path: {message}", { message });
     });
 
   return pane;
@@ -4718,7 +4731,7 @@ function buildPlotsPane(): HTMLElement {
   pane.dataset.tab = "data";
 
   const sidebar = el("aside", "sidebar");
-  const topicFilter = makeFilterBox("Filter topics and fields…", (value) => {
+  const topicFilter = makeFilterBox(t("Filter topics and fields…"), (value) => {
     state.topicFilter = value;
     renderTopicList();
   });
@@ -4728,13 +4741,13 @@ function buildPlotsPane(): HTMLElement {
   pane.appendChild(sidebar);
 
   const resizer = el("div", "sidebar-resizer");
-  resizer.title = "Drag to resize";
+  resizer.title = t("Drag to resize");
   pane.appendChild(resizer);
   setupSidebarResizer(resizer, sidebar);
 
   const sidebarToggle = el("button", "sidebar-toggle");
   sidebarToggle.innerHTML = ICON_SIDEBAR;
-  sidebarToggle.appendChild(el("span", undefined, "Topics"));
+  sidebarToggle.appendChild(el("span", undefined, t("Topics")));
   const setSidebarCollapsed = (collapsed: boolean) => {
     state.sidebarCollapsed = collapsed;
     sidebar.style.display = collapsed ? "none" : "";
@@ -4742,8 +4755,8 @@ function buildPlotsPane(): HTMLElement {
     sidebarToggle.classList.toggle("collapsed", collapsed);
     sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
     sidebarToggle.title = collapsed
-      ? "Show the topic list"
-      : "Hide the topic list to give the plots the full width";
+      ? t("Show the topic list")
+      : t("Hide the topic list to give the plots the full width");
     // The plots' flex row just changed width under them — uPlot only
     // re-measures when told to.
     resizeAllCharts();
@@ -4768,20 +4781,20 @@ function buildPlotsPane(): HTMLElement {
   targetLabelEl = el("span", "target-label");
   toolbar.appendChild(targetLabelEl);
   toolbar.appendChild(el("span", "spacer"));
-  toolbar.appendChild(el("span", undefined, "drag to zoom · double-click to reset"));
-  const resetZoomBtn = el("button", undefined, "Reset zoom");
+  toolbar.appendChild(el("span", undefined, t("drag to zoom · double-click to reset")));
+  const resetZoomBtn = el("button", undefined, t("Reset zoom"));
   resetZoomBtn.addEventListener("click", resetAllZoom);
   toolbar.appendChild(resetZoomBtn);
-  const addPlotBtn = el("button", "primary", "+ Add Plot");
+  const addPlotBtn = el("button", "primary", t("+ Add Plot"));
   addPlotBtn.addEventListener("click", () => createPanel());
   toolbar.appendChild(addPlotBtn);
-  const clearButton = el("button", undefined, "Clear all");
+  const clearButton = el("button", undefined, t("Clear all"));
   clearButton.addEventListener("click", clearAllPlots);
   toolbar.appendChild(clearButton);
   plotPane.appendChild(toolbar);
 
   const viewToolbar = el("div", "plot-toolbar view-toolbar");
-  viewToolbar.appendChild(el("span", "view-toolbar-label", "Time axis:"));
+  viewToolbar.appendChild(el("span", "view-toolbar-label", t("Time axis:")));
   const utcAvailable = state.summary?.utcOffsetUsec != undefined;
   const timeUnitOptions: { value: TimeUnit; label: string; disabled?: boolean; title?: string }[] = [
     { value: "seconds", label: "s" },
@@ -4792,16 +4805,16 @@ function buildPlotsPane(): HTMLElement {
     // rather than the option just silently not being there.
     {
       value: "wallclock",
-      label: "Clock",
+      label: t("Clock"),
       disabled: !utcAvailable,
       title: utcAvailable
-        ? "Wall-clock time, from this log's GPS"
-        : (state.summary?.utcUnavailableReason ?? "No GPS UTC reference available in this log"),
+        ? t("Wall-clock time, from this log's GPS")
+        : (state.summary?.utcUnavailableReason ?? t("No GPS UTC reference available in this log")),
     },
   ];
   const timezoneField = el("label", "timezone-field");
-  timezoneField.title = "Timezone used for the Clock time axis";
-  timezoneField.appendChild(el("span", "timezone-field-label", "TZ:"));
+  timezoneField.title = t("Timezone used for the Clock time axis");
+  timezoneField.appendChild(el("span", "timezone-field-label", t("TZ:")));
   const timezoneSelect = el("select", "timezone-select");
   for (const tz of listTimeZones()) {
     const option = el("option", undefined, tz) as HTMLOptionElement;
@@ -4828,12 +4841,12 @@ function buildPlotsPane(): HTMLElement {
     ),
   );
   viewToolbar.appendChild(timezoneField);
-  viewToolbar.appendChild(makeIconButton(ICON_MARKER, "Add a draggable time marker, shown on every plot", addMarker));
-  viewToolbar.appendChild(makeIconButton(ICON_MARKER_CLEAR, "Remove all time markers", clearAllMarkers));
+  viewToolbar.appendChild(makeIconButton(ICON_MARKER, t("Add a draggable time marker, shown on every plot"), addMarker));
+  viewToolbar.appendChild(makeIconButton(ICON_MARKER_CLEAR, t("Remove all time markers"), clearAllMarkers));
   viewToolbar.appendChild(
     makeIconToggleButton(
       ICON_ZERO,
-      "Shift x-axis so the first timestamp is 0",
+      t("Shift x-axis so the first timestamp is 0"),
       state.zeroOffset,
       (value) => {
         state.zeroOffset = value;
@@ -4842,23 +4855,23 @@ function buildPlotsPane(): HTMLElement {
     ),
   );
   viewToolbar.appendChild(
-    makeIconToggleButton(ICON_LINES, "Show lines connecting data points", state.showLines, (value) => {
+    makeIconToggleButton(ICON_LINES, t("Show lines connecting data points"), state.showLines, (value) => {
       setShowLines(value);
     }),
   );
   viewToolbar.appendChild(
-    makeIconToggleButton(ICON_POINTS, "Show data points", state.showPoints, (value) => {
+    makeIconToggleButton(ICON_POINTS, t("Show data points"), state.showPoints, (value) => {
       setShowPoints(value);
     }),
   );
   viewToolbar.appendChild(
-    makeIconToggleButton(ICON_GRID, "Show background grid", state.showGrid, (value) => {
+    makeIconToggleButton(ICON_GRID, t("Show background grid"), state.showGrid, (value) => {
       state.showGrid = value;
       rebuildAllCharts();
     }),
   );
   viewToolbar.appendChild(
-    makeIconToggleButton(ICON_STEP, "Step lines (hold value until the next sample)", state.stepped, (value) => {
+    makeIconToggleButton(ICON_STEP, t("Step lines (hold value until the next sample)"), state.stepped, (value) => {
       state.stepped = value;
       rebuildAllCharts();
     }),
@@ -4889,8 +4902,11 @@ function buildPlotsPane(): HTMLElement {
     const previousLockedName = state.lockedSavedViewName;
     if (previousLockedName && previousLockedName !== chosenName && isLoadedViewModified()) {
       void showConfirmDialog(
-        `"${previousLockedName}" has unsaved changes. Load "${chosenName}" anyway and discard them?`,
-        "Discard & Load",
+        t("\"{previous}\" has unsaved changes. Load \"{chosen}\" anyway and discard them?", {
+          previous: previousLockedName,
+          chosen: chosenName,
+        }),
+        t("Discard & Load"),
       ).then((discard) => {
         if (!discard) {
           savedViewSelect.value = previousLockedName;
@@ -4909,8 +4925,8 @@ function buildPlotsPane(): HTMLElement {
   savedViewsGroup.appendChild(savedViewSelect);
   saveAreaEl = el("span", "save-view-area");
   savedViewsGroup.appendChild(saveAreaEl);
-  const manageViewsBtn = el("button", undefined, "Manage Views");
-  manageViewsBtn.title = "Rename or delete any saved view";
+  const manageViewsBtn = el("button", undefined, t("Manage Views"));
+  manageViewsBtn.title = t("Rename or delete any saved view");
   manageViewsBtn.addEventListener("click", openManageViewsDialog);
   savedViewsGroup.appendChild(manageViewsBtn);
   viewToolbar.appendChild(savedViewsGroup);
@@ -4923,7 +4939,9 @@ function buildPlotsPane(): HTMLElement {
   plotsEmptyEl = el(
     "div",
     "plots-empty",
-    "Click “+ Add Plot” to create a plot, then select fields from the topic list on the left. Add more plots to compare different signals side by side — their time axes stay in sync.",
+    t(
+      "Click “+ Add Plot” to create a plot, then select fields from the topic list on the left. Add more plots to compare different signals side by side — their time axes stay in sync.",
+    ),
   );
   plotsScroll.appendChild(plotsColumnEl);
   plotsScroll.appendChild(plotsEmptyEl);
@@ -4946,27 +4964,27 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
   // Ctrl+F target: one filter over both tables below, since a reader rarely
   // knows (or cares) whether the key they want landed in "General" or in
   // the log's own information entries.
-  const infoFilter = makeFilterBox("Filter info…", (value) => applyInfoFilter(value));
+  const infoFilter = makeFilterBox(t("Filter info…"), (value) => applyInfoFilter(value));
   const toolbar = el("div", "pane-toolbar params-toolbar");
   toolbar.appendChild(infoFilter.box);
   pane.appendChild(toolbar);
   registerSearchInput("info", infoFilter.input);
 
   const fixedSection = el("div", "pane-fixed");
-  const generalHeading = el("h3", "section", "General");
+  const generalHeading = el("h3", "section", t("General"));
   fixedSection.appendChild(generalHeading);
-  const general = makeResizableTable(["Key", "Value"], [140], { zebra: true });
+  const general = makeResizableTable([t("Key"), t("Value")], [140], { zebra: true });
   const [startSec, endSec] = summary.timeRange;
   const rows: [string, string][] = [
-    ["File", summary.fileName],
-    ["Size", formatFileSize(summary.fileSizeBytes)],
-    ["ULog version", String(summary.ulogVersion)],
-    ["Duration", formatDuration(summary.durationSec)],
-    ["Time range", `${formatTimeTick(startSec, 1)} – ${formatTimeTick(endSec, 1)}`],
-    ["Start time", formatUtcStartTime(summary)],
-    ["Messages", summary.messageCount.toLocaleString()],
-    ["Topics", String(summary.topics.length)],
-    ["Parameters", String(summary.parameters.length)],
+    [t("File"), summary.fileName],
+    [t("Size"), formatFileSize(summary.fileSizeBytes)],
+    [t("ULog version"), String(summary.ulogVersion)],
+    [t("Duration"), formatDuration(summary.durationSec)],
+    [t("Time range"), `${formatTimeTick(startSec, 1)} – ${formatTimeTick(endSec, 1)}`],
+    [t("Start time"), formatUtcStartTime(summary)],
+    [t("Messages"), summary.messageCount.toLocaleString()],
+    [t("Topics"), String(summary.topics.length)],
+    [t("Parameters"), String(summary.parameters.length)],
   ];
   for (const [key, value] of rows) {
     const row = el("tr");
@@ -4976,11 +4994,11 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
   }
   enableRowSelection(general.tbody);
   fixedSection.appendChild(general.table);
-  const infoHeading = el("h3", "section", "Log information");
+  const infoHeading = el("h3", "section", t("Log information"));
   fixedSection.appendChild(infoHeading);
   pane.appendChild(fixedSection);
 
-  const info = makeResizableTable(["Key", "Value"], [220], { zebra: true });
+  const info = makeResizableTable([t("Key"), t("Value")], [220], { zebra: true });
   for (const [key, value] of summary.info) {
     const row = el("tr");
     row.appendChild(el("td", "key", key));
@@ -5017,11 +5035,12 @@ function makeStatTile(value: string, label: string, title?: string): HTMLElement
   return tile;
 }
 
-const DEFAULT_VALUE_EXPLANATION =
+const DEFAULT_VALUE_EXPLANATION = t(
   "PX4's recorded default for this build, read from this log file's own " +
   "'parameter default' entries — not an external database, so it's exact " +
   "for this flight, but only covers whichever parameters this specific " +
-  "firmware build chose to log a default for (often a minority).";
+  "firmware build chose to log a default for (often a minority).",
+);
 
 function buildParametersStatsBar(summary: LogSummary): HTMLElement {
   const wrap = el("div", "pane-fixed");
@@ -5031,13 +5050,13 @@ function buildParametersStatsBar(summary: LogSummary): HTMLElement {
   const changedFromDefault = summary.parameters.filter(isChangedFromDefault).length;
   const changedInFlight = summary.parameters.filter((p) => p.changes.length > 0).length;
 
-  bar.appendChild(makeStatTile(String(summary.parameters.length), "parameters"));
+  bar.appendChild(makeStatTile(String(summary.parameters.length), t("parameters")));
   bar.appendChild(
     hasDefaults
-      ? makeStatTile(String(changedFromDefault), "changed from default", DEFAULT_VALUE_EXPLANATION)
-      : makeStatTile("—", "changed from default", "This log has no recorded default values"),
+      ? makeStatTile(String(changedFromDefault), t("changed from default"), DEFAULT_VALUE_EXPLANATION)
+      : makeStatTile("—", t("changed from default"), t("This log has no recorded default values")),
   );
-  bar.appendChild(makeStatTile(String(changedInFlight), "changed mid-flight"));
+  bar.appendChild(makeStatTile(String(changedInFlight), t("changed mid-flight")));
   wrap.appendChild(bar);
 
   if (hasDefaults) {
@@ -5045,7 +5064,10 @@ function buildParametersStatsBar(summary: LogSummary): HTMLElement {
       el(
         "div",
         "params-hint",
-        `Default values are from this log's own metadata (${withDefaults} of ${summary.parameters.length} parameters have one), not all firmware builds record them for every parameter.`,
+        t(
+          "Default values are from this log's own metadata ({with} of {total} parameters have one), not all firmware builds record them for every parameter.",
+          { with: withDefaults, total: summary.parameters.length },
+        ),
       ),
     );
   }
@@ -5061,7 +5083,7 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
   const toolbar = el("div", "pane-toolbar params-toolbar");
   const filterInput = el("input");
   filterInput.type = "text";
-  filterInput.placeholder = "Filter parameters…";
+  filterInput.placeholder = t("Filter parameters…");
   const filterBox = el("div", "filter-box");
   filterBox.appendChild(filterInput);
   registerSearchInput("parameters", filterInput);
@@ -5069,9 +5091,9 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
   toolbar.appendChild(
     makeSegmented<ParameterQuickFilter>(
       [
-        { value: "all", label: "All" },
-        { value: "default", label: "Changed from default" },
-        { value: "flight", label: "Changed mid-flight" },
+        { value: "all", label: t("All") },
+        { value: "default", label: t("Changed from default") },
+        { value: "flight", label: t("Changed mid-flight") },
       ],
       state.parameterQuickFilter,
       (value) => {
@@ -5082,7 +5104,7 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
   );
   pane.appendChild(toolbar);
 
-  const { table, tbody } = makeResizableTable(["Parameter", "Value", "Default", ""], [220, 100, 100]);
+  const { table, tbody } = makeResizableTable([t("Parameter"), t("Value"), t("Default"), ""], [220, 100, 100]);
   table.querySelector("th:nth-child(3)")?.setAttribute("title", DEFAULT_VALUE_EXPLANATION);
   enableRowSelection(tbody);
   const render = (filter: string) => {
@@ -5136,8 +5158,8 @@ function buildParameterRows(param: ParameterInfo, visibleIndex: number): HTMLEle
   }
 
   const changeCount = param.changes.length;
-  const badge = el("button", "badge changed-param", `${changeCount} change${changeCount > 1 ? "s" : ""}`);
-  badge.title = "Show change history";
+  const badge = el("button", "badge changed-param", t("{count} changes", { count: changeCount }));
+  badge.title = t("Show change history");
   flagCell.appendChild(badge);
 
   // No timestamp column — see ParameterInfo.changes' own doc comment for
@@ -5146,7 +5168,7 @@ function buildParameterRows(param: ParameterInfo, visibleIndex: number): HTMLEle
   const history = el("div", "param-history");
   history.style.display = "none";
   const initialRow = el("div", "param-history-row");
-  initialRow.appendChild(el("span", "param-history-time", "initial"));
+  initialRow.appendChild(el("span", "param-history-time", t("initial")));
   initialRow.appendChild(el("span", "param-history-value num", formatNumber(param.value)));
   history.appendChild(initialRow);
   param.changes.forEach((value, index) => {
@@ -5257,7 +5279,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   if (summary.logMessages.length === 0) {
     const pane = el("section", "tab-pane scroll");
     pane.dataset.tab = "messages";
-    pane.appendChild(el("div", "centered-note", "No log messages in this file."));
+    pane.appendChild(el("div", "centered-note", t("No log messages in this file.")));
     return pane;
   }
 
@@ -5269,7 +5291,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   // them when jumping to a time below.
   const maxSaneTime = summary.timeRange[1] + 3600;
   const utcAvailable = summary.utcOffsetUsec != undefined;
-  const { table, tbody } = makeResizableTable(["Time", "Level", "Message"], [130, 70]);
+  const { table, tbody } = makeResizableTable([t("Time"), t("Level"), t("Message")], [130, 70]);
   table.classList.add("messages-table");
   enableRowSelection(tbody);
   // Date included (unlike the Data tab's Clock axis) — a bare time-of-day
@@ -5325,8 +5347,8 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   const updateCountLabel = () => {
     countLabel.textContent =
       levelFilter === "all" && textFilter.trim() === ""
-        ? `${visible.length} messages`
-        : `${visible.length} of ${entries.length}`;
+        ? t("{count} messages", { count: visible.length })
+        : t("{count} of {total}", { count: visible.length, total: entries.length });
   };
 
   const applyFilters = () => {
@@ -5359,7 +5381,7 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   const searchBox = el("div", "filter-box messages-search");
   const searchInput = el("input");
   searchInput.type = "text";
-  searchInput.placeholder = "Search messages…";
+  searchInput.placeholder = t("Search messages…");
   searchBox.appendChild(searchInput);
   registerSearchInput("messages", searchInput);
   searchInput.addEventListener("input", () => {
@@ -5372,10 +5394,10 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   toolbar.appendChild(
     makeSegmented<MessageLevelFilter>(
       [
-        { value: "all", label: "All" },
-        { value: "info", label: "Info" },
-        { value: "warn", label: "Warnings" },
-        { value: "err", label: "Errors" },
+        { value: "all", label: t("All") },
+        { value: "info", label: t("Info") },
+        { value: "warn", label: t("Warnings") },
+        { value: "err", label: t("Errors") },
       ],
       levelFilter,
       (value) => {
@@ -5384,16 +5406,16 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
       },
     ),
   );
-  const clockToggleBtn = el("button", undefined, "Clock") as HTMLButtonElement;
+  const clockToggleBtn = el("button", undefined, t("Clock")) as HTMLButtonElement;
   clockToggleBtn.classList.toggle("disabled", !utcAvailable);
   clockToggleBtn.title = utcAvailable
-    ? "Show each message's wall-clock time (from this log's GPS), in the timezone below"
-    : (summary.utcUnavailableReason ?? "No GPS UTC reference available in this log");
+    ? t("Show each message's wall-clock time (from this log's GPS), in the timezone below")
+    : (summary.utcUnavailableReason ?? t("No GPS UTC reference available in this log"));
   // Same field as the Data tab's Clock time axis — same shared
   // state.timezone too, so picking a zone in either place applies to both.
   const timezoneField = el("label", "timezone-field");
-  timezoneField.title = "Timezone used for the Clock column";
-  timezoneField.appendChild(el("span", "timezone-field-label", "TZ:"));
+  timezoneField.title = t("Timezone used for the Clock column");
+  timezoneField.appendChild(el("span", "timezone-field-label", t("TZ:")));
   const timezoneSelect = el("select", "timezone-select");
   for (const tz of listTimeZones()) {
     const option = el("option", undefined, tz) as HTMLOptionElement;
@@ -5457,14 +5479,14 @@ function buildMessagesPane(summary: LogSummary): HTMLElement {
   toolbar.appendChild(el("span", "spacer"));
   toolbar.appendChild(clockToggleBtn);
   toolbar.appendChild(timezoneField);
-  toolbar.appendChild(makeIconButton(ICON_PREV, "Previous message", () => jumpTo((cursor <= 0 ? 0 : cursor - 1))));
-  toolbar.appendChild(makeIconButton(ICON_NEXT, "Next message", () => jumpTo(cursor + 1)));
-  toolbar.appendChild(el("span", undefined, "Jump to:"));
+  toolbar.appendChild(makeIconButton(ICON_PREV, t("Previous message"), () => jumpTo((cursor <= 0 ? 0 : cursor - 1))));
+  toolbar.appendChild(makeIconButton(ICON_NEXT, t("Next message"), () => jumpTo(cursor + 1)));
+  toolbar.appendChild(el("span", undefined, t("Jump to:")));
   const jumpInput = el("input", "time-jump-input");
   jumpInput.type = "text";
   jumpInput.placeholder = "m:ss";
   toolbar.appendChild(jumpInput);
-  const jumpBtn = el("button", undefined, "Go");
+  const jumpBtn = el("button", undefined, t("Go"));
   toolbar.appendChild(jumpBtn);
   pane.appendChild(toolbar);
 
@@ -5530,7 +5552,7 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
   // Ctrl+F target: one filter across every section below. A section stays
   // visible when its heading matches (all of its rows shown) or when at
   // least one of its rows does; sections with nothing left collapse away.
-  const structureFilter = makeFilterBox("Filter structure…", (value) => applyStructureFilter(value));
+  const structureFilter = makeFilterBox(t("Filter structure…"), (value) => applyStructureFilter(value));
   const filterToolbar = el("div", "pane-toolbar params-toolbar");
   filterToolbar.appendChild(structureFilter.box);
   outerPane.appendChild(filterToolbar);
@@ -5538,38 +5560,38 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
 
   const pane = el("div", "structure-scroll");
 
-  pane.appendChild(el("h3", "section", "Overview"));
+  pane.appendChild(el("h3", "section", t("Overview")));
   const statsBar = el("div", "params-stats");
-  statsBar.appendChild(makeStatTile(String(summary.ulogVersion), "ULog version"));
-  statsBar.appendChild(makeStatTile(formatFileSize(summary.headerSizeBytes), "header size"));
-  statsBar.appendChild(makeStatTile(summary.messageCount.toLocaleString(), "data messages"));
+  statsBar.appendChild(makeStatTile(String(summary.ulogVersion), t("ULog version")));
+  statsBar.appendChild(makeStatTile(formatFileSize(summary.headerSizeBytes), t("header size")));
+  statsBar.appendChild(makeStatTile(summary.messageCount.toLocaleString(), t("data messages")));
   statsBar.appendChild(
     makeStatTile(
       String(summary.dropouts.length),
-      "dropouts",
+      t("dropouts"),
       summary.dropouts.length > 0
-        ? "Logged gaps in the data section — see Dropouts below"
-        : "No logging gaps detected in this file",
+        ? t("Logged gaps in the data section — see Dropouts below")
+        : t("No logging gaps detected in this file"),
     ),
   );
   pane.appendChild(statsBar);
 
-  pane.appendChild(el("h3", "section", "File Layout"));
+  pane.appendChild(el("h3", "section", t("File Layout")));
   const appendedBytes =
     summary.hasAppendedDataFlag && summary.appendedDataOffset != undefined
       ? Math.max(0, summary.fileSizeBytes - summary.appendedDataOffset)
       : 0;
   const dataBytes = Math.max(0, summary.fileSizeBytes - summary.headerSizeBytes - appendedBytes);
-  const layoutTable = makeResizableTable(["Section", "Size"], [160], { zebra: true });
+  const layoutTable = makeResizableTable([t("Section"), t("Size")], [160], { zebra: true });
   const layoutPct = (bytes: number) => (summary.fileSizeBytes > 0 ? ` (${((bytes / summary.fileSizeBytes) * 100).toFixed(1)}%)` : "");
   const layoutRows: [string, string][] = [
-    ["Header section", `${formatFileSize(summary.headerSizeBytes)}${layoutPct(summary.headerSizeBytes)}`],
-    ["Data section", `${formatFileSize(dataBytes)}${layoutPct(dataBytes)}`],
+    [t("Header section"), `${formatFileSize(summary.headerSizeBytes)}${layoutPct(summary.headerSizeBytes)}`],
+    [t("Data section"), `${formatFileSize(dataBytes)}${layoutPct(dataBytes)}`],
   ];
   if (summary.hasAppendedDataFlag) {
-    layoutRows.push(["Appended section", `${formatFileSize(appendedBytes)}${layoutPct(appendedBytes)}`]);
+    layoutRows.push([t("Appended section"), `${formatFileSize(appendedBytes)}${layoutPct(appendedBytes)}`]);
   }
-  layoutRows.push(["Total file size", formatFileSize(summary.fileSizeBytes)]);
+  layoutRows.push([t("Total file size"), formatFileSize(summary.fileSizeBytes)]);
   for (const [key, value] of layoutRows) {
     const row = el("tr");
     row.appendChild(el("td", "key", key));
@@ -5579,25 +5601,25 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
   enableRowSelection(layoutTable.tbody);
   pane.appendChild(layoutTable.table);
 
-  pane.appendChild(el("h3", "section", "Flags & Header"));
-  const flagsTable = makeResizableTable(["Key", "Value"], [220], { zebra: true });
+  pane.appendChild(el("h3", "section", t("Flags & Header")));
+  const flagsTable = makeResizableTable([t("Key"), t("Value")], [220], { zebra: true });
   const flagsRows: [string, string][] = [
-    ["Default parameters recorded (compatible flag)", summary.hasDefaultParametersFlag ? "Yes" : "No"],
-    ["Has appended section (incompatible flag)", summary.hasAppendedDataFlag ? "Yes" : "No"],
+    [t("Default parameters recorded (compatible flag)"), summary.hasDefaultParametersFlag ? t("Yes") : t("No")],
+    [t("Has appended section (incompatible flag)"), summary.hasAppendedDataFlag ? t("Yes") : t("No")],
   ];
   if (summary.hasAppendedDataFlag && summary.appendedDataOffset != undefined) {
-    flagsRows.push(["Appended section offset", `${summary.appendedDataOffset.toLocaleString()} bytes`]);
+    flagsRows.push([t("Appended section offset"), t("{count} bytes", { count: summary.appendedDataOffset.toLocaleString() })]);
   }
   flagsRows.push([
-    "File header timestamp (raw)",
-    summary.fileHeaderTimestampUsec > 0 ? `${summary.fileHeaderTimestampUsec.toLocaleString()} µs` : "0 (not set by logger)",
+    t("File header timestamp (raw)"),
+    summary.fileHeaderTimestampUsec > 0 ? `${summary.fileHeaderTimestampUsec.toLocaleString()} µs` : t("0 (not set by logger)"),
   ]);
   appendKeyValueRows(flagsTable.tbody, flagsRows);
   enableRowSelection(flagsTable.tbody);
   pane.appendChild(flagsTable.table);
 
-  pane.appendChild(el("h3", "section", "Message Type Counts"));
-  const typeTable = makeResizableTable(["Type", "Count"], [200], { zebra: true });
+  pane.appendChild(el("h3", "section", t("Message Type Counts")));
+  const typeTable = makeResizableTable([t("Type"), t("Count")], [200], { zebra: true });
   for (const { label, typeCode, count } of summary.messageTypeCounts) {
     const row = el("tr");
     row.appendChild(el("td", "key", `${label} (0x${typeCode.toString(16).padStart(2, "0")})`));
@@ -5608,8 +5630,8 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
   pane.appendChild(typeTable.table);
 
   if (summary.logLevelCounts.length > 0) {
-    pane.appendChild(el("h3", "section", "Log Message Levels"));
-    const levelTable = makeResizableTable(["Level", "Count"], [160], { zebra: true });
+    pane.appendChild(el("h3", "section", t("Log Message Levels")));
+    const levelTable = makeResizableTable([t("Level"), t("Count")], [160], { zebra: true });
     for (const { level, count } of summary.logLevelCounts) {
       const row = el("tr");
       const levelCell = el("td");
@@ -5622,8 +5644,8 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
     pane.appendChild(levelTable.table);
   }
 
-  pane.appendChild(el("h3", "section", `Format Definitions (${summary.formatDefinitions.length})`));
-  const defTable = makeResizableTable(["Name", "Format"], [220], { zebra: true });
+  pane.appendChild(el("h3", "section", t("Format Definitions ({count})", { count: summary.formatDefinitions.length })));
+  const defTable = makeResizableTable([t("Name"), t("Format")], [220], { zebra: true });
   for (const def of summary.formatDefinitions) {
     const row = el("tr");
     row.appendChild(el("td", "key", def.name));
@@ -5635,8 +5657,8 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
   enableRowSelection(defTable.tbody);
   pane.appendChild(defTable.table);
 
-  pane.appendChild(el("h3", "section", `Subscriptions (${summary.topics.length})`));
-  const subTable = makeResizableTable(["msgId", "Name", "Multi ID", "Data Count"], [70, 240, 80], { zebra: true });
+  pane.appendChild(el("h3", "section", t("Subscriptions ({count})", { count: summary.topics.length })));
+  const subTable = makeResizableTable(["msgId", t("Name"), t("Multi ID"), t("Data Count")], [70, 240, 80], { zebra: true });
   for (const topic of summary.topics.slice().sort((a, b) => a.msgId - b.msgId)) {
     const row = el("tr");
     row.appendChild(el("td", "num", String(topic.msgId)));
@@ -5648,20 +5670,22 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
   enableRowSelection(subTable.tbody);
   pane.appendChild(subTable.table);
 
-  pane.appendChild(el("h3", "section", `Untrusted Topics (${summary.untrustedTopics.length})`));
+  pane.appendChild(el("h3", "section", t("Untrusted Topics ({count})", { count: summary.untrustedTopics.length })));
   if (summary.untrustedTopics.length === 0) {
     pane.appendChild(
-      el("div", "params-hint", "None — every subscription's timestamp field could be trusted for time-based data."),
+      el("div", "params-hint", t("None — every subscription's timestamp field could be trusted for time-based data.")),
     );
   } else {
     pane.appendChild(
       el(
         "div",
         "params-hint",
-        "These subscriptions' timestamp field couldn't be resolved (no uint64_t “timestamp” field where expected) — typically non-PX4-native companion-computer topics with unusual layouts. Excluded from this scan's own time-based computations.",
+        t(
+          "These subscriptions' timestamp field couldn't be resolved (no uint64_t “timestamp” field where expected) — typically non-PX4-native companion-computer topics with unusual layouts. Excluded from this scan's own time-based computations.",
+        ),
       ),
     );
-    const untrustedTable = makeResizableTable(["msgId", "Name"], [70], { zebra: true });
+    const untrustedTable = makeResizableTable(["msgId", t("Name")], [70], { zebra: true });
     for (const topic of summary.untrustedTopics) {
       const row = el("tr");
       row.appendChild(el("td", "num", String(topic.msgId)));
@@ -5672,11 +5696,11 @@ function buildStructurePane(summary: LogSummary): HTMLElement {
     pane.appendChild(untrustedTable.table);
   }
 
-  pane.appendChild(el("h3", "section", `Dropouts (${summary.dropouts.length})`));
+  pane.appendChild(el("h3", "section", t("Dropouts ({count})", { count: summary.dropouts.length })));
   if (summary.dropouts.length === 0) {
-    pane.appendChild(el("div", "params-hint", "No dropouts detected — this log reports no gaps in its data section."));
+    pane.appendChild(el("div", "params-hint", t("No dropouts detected — this log reports no gaps in its data section.")));
   } else {
-    const dropoutTable = makeResizableTable(["Time (s)", "Duration (ms)"], [140], { zebra: true });
+    const dropoutTable = makeResizableTable([t("Time (s)"), t("Duration (ms)")], [140], { zebra: true });
     for (const dropout of summary.dropouts) {
       const row = el("tr");
       row.appendChild(el("td", "num", dropout.timeSec.toFixed(3)));
@@ -5757,9 +5781,9 @@ function buildUi(summary: LogSummary): void {
   const startTimeEl = el(
     "span",
     "file-meta",
-    startTime.endsWith(" UTC") ? startTime : "Start time unavailable",
+    startTime.endsWith(" UTC") ? startTime : t("Start time unavailable"),
   );
-  startTimeEl.title = `Log start: ${startTime}`;
+  startTimeEl.title = t("Log start: {time}", { time: startTime });
   topbar.appendChild(startTimeEl);
   const infoMap = new Map(summary.info);
   const metaParts = [
@@ -5773,12 +5797,12 @@ function buildUi(summary: LogSummary): void {
 
   const tabs = el("nav", "tabs");
   const tabDefs: [string, string][] = [
-    ["data", "Data"],
-    ["replay", "Replay"],
-    ["info", "Info"],
-    ["parameters", `Parameters (${summary.parameters.length})`],
-    ["messages", `Messages (${summary.logMessages.length})`],
-    ["structure", "Structure"],
+    ["data", t("Data")],
+    ["replay", t("Replay")],
+    ["info", t("Info")],
+    ["parameters", t("Parameters ({count})", { count: summary.parameters.length })],
+    ["messages", t("Messages ({count})", { count: summary.logMessages.length })],
+    ["structure", t("Structure")],
   ];
   for (const [id, label] of tabDefs) {
     const button = el("button", undefined, label);
@@ -5815,7 +5839,7 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
     case "loadError": {
       app.textContent = "";
       app.appendChild(
-        el("div", "centered-note error-note", `Failed to load ULog file: ${message.message}`),
+        el("div", "centered-note error-note", t("Failed to load ULog file: {message}", { message: message.message })),
       );
       break;
     }
@@ -5875,7 +5899,7 @@ window.addEventListener("message", (event: MessageEvent<HostToWebviewMessage>) =
       if (panel) {
         state.pending.delete(pendingKey(panel.id, message.msgId, message.field));
       }
-      setPlotStatus(`Failed to load ${message.field}: ${message.message}`);
+      setPlotStatus(t("Failed to load {field}: {error}", { field: message.field, error: message.message }));
       refreshFieldButtons();
       break;
     }
@@ -5919,5 +5943,5 @@ window.addEventListener("focus", () => {
   vscode.postMessage({ type: "refreshSavedViews" });
 });
 
-app.appendChild(el("div", "centered-note", "Parsing ULog file…"));
+app.appendChild(el("div", "centered-note", t("Parsing ULog file…")));
 vscode.postMessage({ type: "ready" });

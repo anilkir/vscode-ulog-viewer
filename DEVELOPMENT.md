@@ -42,6 +42,28 @@ Parsing stays in the extension host so the webview only ever receives
 display-ready data; new views (maps, flight-mode timelines, …) can be added by
 extending the protocol.
 
+## Localization
+
+Two mechanisms, one per runtime context:
+
+- **Extension host** strings go through `vscode.l10n.t()` and are translated
+  by `l10n/bundle.l10n.{locale}.json` (VS Code discovers the `l10n/` folder
+  via the `l10n` field in package.json). Regenerate the English template
+  after adding strings: `npx @vscode/l10n-dev export --outDir l10n src`.
+- **Webviews** cannot use `vscode.l10n`, so `src/webview/l10n.ts` provides a
+  `t()` that looks up dictionaries under `src/webview/locales/`. The host
+  injects the UI language into `<html lang>` when generating each webview's
+  HTML. Keys are the English source strings; a missing entry falls back to
+  English.
+
+`package.json` manifest strings (display name, command titles, view name) use
+the `%key%` placeholders resolved by `package.nls.json` (English) and
+`package.nls.{locale}.json`.
+
+PX4 domain terminology — flight-mode names (`AUTO_RTL`, …), log levels
+(`INFO`, `WARN`), GNSS protocol names (`UBX`), units (`m/s`, `KiB`) — stays in
+English on purpose, matching PX4 docs and other ground-station tooling.
+
 ## TODO
 
 - If a new plot is added while others are zoomed in with markers, then markers
