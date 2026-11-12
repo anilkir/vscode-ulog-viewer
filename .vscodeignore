@@ -6,3 +6,5 @@ tsconfig.json
 .gitignore
 **/*.map
 DEVELOPMENT.md
+scripts/**
+tests/**

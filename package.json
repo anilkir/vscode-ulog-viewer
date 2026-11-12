@@ -87,6 +87,8 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
+    "update-params": "node scripts/update-px4-params.mjs",
+    "update-msgs": "node scripts/update-px4-msgs.mjs",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
