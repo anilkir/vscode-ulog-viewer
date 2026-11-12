@@ -1,11 +1,13 @@
 import { batteryReadingsAt, type ReplayBattery } from "../replayBattery";
 import { quaternionToRpy } from "../quaternion";
+import { describeValue } from "../valueNames";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import type {
   FieldInfo,
   FieldStats,
+  ParameterDoc,
   HostToWebviewMessage,
   LogMessageInfo,
   LogSummary,
@@ -157,6 +159,15 @@ interface PlotSeries {
   slot: number;
   times: Float64Array;
   values: Float64Array;
+  /** Name to show beside a value in legends: the enum constant or bitmask
+   *  bits it stands for (see valueNames.ts). */
+  valueLabel?: (value: number) => string | undefined;
+}
+
+/** A series value as shown in legends: the number, plus its name if it has one. */
+function formatSeriesValue(s: PlotSeries, value: number): string {
+  const label = Number.isFinite(value) ? s.valueLabel?.(value) : undefined;
+  return label ? `${formatNumber(value)} (${label})` : formatNumber(value);
 }
 
 interface PlotPanel {
@@ -190,6 +201,8 @@ interface PlotPanel {
    *  rebuilt, moved, or re-ranged. Torn down and recreated wholesale rather
    *  than diffed — there are only ever a handful of markers. */
   markerEls: Map<number, MarkerEls>;
+  /** Y-axis width this panel's own tick labels need; see yAxisSize. */
+  yAxisNeed?: number;
   /** Legend height last accounted for in the canvas/legend height split
    *  (see computeChartSize) — compared against on every cursor move so a
    *  hover-triggered legend rewrap (live values make each entry wider,
@@ -662,6 +675,41 @@ function updateTargetLabel(): void {
   targetLabelEl.textContent = index >= 0 ? `Adding to Plot ${index + 1}` : "";
 }
 
+const Y_AXIS_MIN_SIZE = 60;
+let sharedYAxisSize = Y_AXIS_MIN_SIZE;
+let yAxisMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * Y-axis width: wide enough for the longest tick label of *any* panel, so
+ * big values aren't clipped at the left edge while every panel's plot area
+ * still starts at the same x (their time axes are synced and read across).
+ */
+function yAxisSize(panel: PlotPanel, values: string[] | null, font: string, tickSize: number): number {
+  yAxisMeasureCtx ??= document.createElement("canvas").getContext("2d");
+  let textWidth = 0;
+  if (yAxisMeasureCtx) {
+    yAxisMeasureCtx.font = font;
+    for (const value of values ?? []) {
+      textWidth = Math.max(textWidth, yAxisMeasureCtx.measureText(value).width);
+    }
+  }
+  // Tick mark + uPlot's default 5px label gap + a little margin at the edge.
+  panel.yAxisNeed = Math.ceil(textWidth) + tickSize + 5 + 6;
+  const size = Math.max(Y_AXIS_MIN_SIZE, ...state.panels.map((p) => p.yAxisNeed ?? 0));
+  if (size !== sharedYAxisSize) {
+    sharedYAxisSize = size;
+    // The other panels pick the new width up on their next axis layout, and
+    // every plot area just moved under its markers.
+    requestAnimationFrame(() => {
+      for (const other of state.panels) {
+        if (other !== panel) other.chart?.redraw(false, true);
+        for (const marker of state.markers) updateMarkerVisual(other, marker);
+      }
+    });
+  }
+  return size;
+}
+
 function computeChartSize(panel: PlotPanel): { width: number; height: number } {
   const legend = panel.chartMountEl.querySelector<HTMLElement>(".u-legend");
   const legendHeight = legend?.offsetHeight ?? 0;
@@ -717,11 +765,17 @@ function renderPanelChips(panel: PlotPanel): void {
 }
 
 function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
-  const prevXScale = !resetZoom ? panel.chart?.scales.x : undefined;
+  // A panel getting its first chart (a newly added plot) joins the time range
+  // the other plots are showing, rather than starting at the full log and
+  // leaving the user to zoom it to match — the plots share one time axis.
+  const prevXScale = !resetZoom
+    ? (panel.chart ?? state.panels.find((p) => p !== panel && p.chart)?.chart)?.scales.x
+    : undefined;
   const prevXMin = prevXScale?.min;
   const prevXMax = prevXScale?.max;
   panel.chart?.destroy();
   panel.chart = undefined;
+  panel.yAxisNeed = undefined;
   renderPanelChips(panel);
 
   if (panel.series.length === 0) {
@@ -780,7 +834,7 @@ function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
         // cluster of markers (uPlot's own fallback point styling) visually
         // paint over other series' lines underneath them.
         points: { show: state.showPoints, size: 5, width: 1, stroke: seriesColor(s.slot), fill: seriesColor(s.slot) },
-        value: (_u: uPlot, v: number | null) => (v == null ? "—" : formatNumber(v)),
+        value: (_u: uPlot, v: number | null) => (v == null ? "—" : formatSeriesValue(s, v)),
       })),
     ],
     axes: [
@@ -810,7 +864,7 @@ function rebuildPanelChart(panel: PlotPanel, resetZoom = false): void {
         font: axisFont,
         grid: { ...grid },
         ticks: { ...ticks },
-        size: 60,
+        size: (_u, values) => yAxisSize(panel, values, axisFont, ticks.size),
       },
     ],
     cursor: {
@@ -1088,7 +1142,7 @@ function updateMarkerVisual(panel: PlotPanel, marker: Marker): void {
     const dot = el("span", "plot-marker-value-dot");
     dot.style.background = seriesColor(s.slot);
     row.appendChild(dot);
-    row.appendChild(el("span", undefined, `${s.label}: ${value == undefined ? "—" : formatNumber(value)}`));
+    row.appendChild(el("span", undefined, `${s.label}: ${value == undefined ? "—" : formatSeriesValue(s, value)}`));
     els.values.appendChild(row);
   }
 }
@@ -1720,6 +1774,8 @@ function removePanel(panelId: number): void {
   const [panel] = state.panels.splice(index, 1);
   panel!.chart?.destroy();
   panel!.containerEl.remove();
+  // The removed panel may have been the one holding the shared Y-axis width open.
+  for (const other of state.panels) other.chart?.redraw(false, true);
   for (const key of [...state.pending]) {
     if (key.startsWith(`${panelId}:`)) {
       state.pending.delete(key);
@@ -2195,15 +2251,12 @@ function addSeries(msgId: number, field: string, times: Float64Array, values: Fl
     slot++;
   }
   const topic = state.summary?.topics.find((t) => t.msgId === msgId);
-  panel.series.push({
-    key,
-    msgId,
-    field,
-    label: `${topic?.name ?? msgId}.${field}`,
-    slot,
-    times,
-    values,
-  });
+  const series: PlotSeries = { key, msgId, field, label: `${topic?.name ?? msgId}.${field}`, slot, times, values };
+  const valueNames = topic?.fields.find((f) => f.name === field)?.valueNames;
+  if (valueNames) {
+    series.valueLabel = (value) => describeValue(valueNames, value);
+  }
+  panel.series.push(series);
   updatePlotStatus();
   rebuildPanelChart(panel);
   refreshFieldButtons();
@@ -2580,8 +2633,17 @@ function populateFieldStats(): void {
   for (const button of topicListEl.querySelectorAll<HTMLElement>(".field-btn")) {
     const valueEl = button.querySelector<HTMLElement>(".field-value");
     if (!valueEl) continue;
-    const stats = fieldStatsCache.get(Number(button.dataset.msgId))?.[button.dataset.field!];
-    if (!stats) continue;
+    const topicStats = fieldStatsCache.get(Number(button.dataset.msgId));
+    const stats = topicStats?.[button.dataset.field!];
+    if (!stats) {
+      // A computed field can be empty for a whole log, e.g. CAN REC when the
+      // ESCs only ever reported TEC: say so rather than leave it blank.
+      if (topicStats && button.classList.contains("derived-field-btn")) {
+        valueEl.textContent = "no data";
+        valueEl.title = "No sample in this log has a value for this computed field";
+      }
+      continue;
+    }
     const constant = stats.min === stats.max && stats.validCount === stats.sampleCount;
     const format = (value: number): string => Number.isInteger(value) ? String(value) : formatNumber(value);
     valueEl.textContent = constant ? format(stats.min) : `[${format(stats.min)}, ${format(stats.max)}]`;
@@ -3194,6 +3256,7 @@ function drawVehicleIcon(
   heading: number | undefined,
   size: number,
   color: string,
+  outlined = false,
 ): void {
   ctx.save();
   ctx.translate(screenX, screenY);
@@ -3206,6 +3269,18 @@ function drawVehicleIcon(
   ctx.lineTo(0, size * 0.35);
   ctx.lineTo(-size * 0.6, size * 0.7);
   ctx.closePath();
+  if (outlined) {
+    // A white ring with a thin dark edge, under the fill: it stands out on
+    // light and dark map tiles alike, and against the trail, where a single
+    // coloured border blends in.
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+    ctx.stroke();
+    ctx.lineWidth = 4.5;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+  }
   ctx.fillStyle = color;
   ctx.fill();
   ctx.restore();
@@ -3934,6 +4009,9 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     toolbar.appendChild(tzField);
   }
 
+  const centerBtn = el("button", undefined, "Center on Vehicle") as HTMLButtonElement;
+  centerBtn.title = "Pan the map so the vehicle is in the middle, keeping the current zoom";
+  toolbar.appendChild(centerBtn);
   toolbar.appendChild(el("span", undefined, "scroll to zoom · drag to pan · double-click to reset"));
   pane.appendChild(toolbar);
 
@@ -3950,42 +4028,62 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   const landedChip = el("span", "badge replay-landed-badge", "ON GROUND");
   const modeChip = el("span", "badge replay-mode-badge");
 
-  // A small aligned label/value grid reads much better than one long joined
-  // string, and only the value cell's text changes per frame. Each metric
-  // group (altitudes, speeds, battery) is its own such grid so the columns
-  // align within a group; a row is added only if the log has that source.
-  const makeKvGrid = () => {
+  // Each metric group (altitude, speed, battery) leads with the one number
+  // that matters most, large, and lists the rest beneath it as a small
+  // aligned label/value grid. A row is added only if the log has that source.
+  const makeMetrics = () => {
     const grid = el("div", "replay-alt-grid");
-    const add = (label: string): HTMLElement => {
-      grid.appendChild(el("span", "replay-alt-key", label));
+    let primaryRow: HTMLElement | undefined;
+    const afterPrimary: HTMLElement[] = [];
+    /** The group's headline number: large, with what it is beside it. */
+    const addPrimary = (label: string): HTMLElement => {
+      primaryRow = el("div", "replay-primary");
+      const valueEl = el("span", "replay-primary-val", "—");
+      primaryRow.appendChild(valueEl);
+      primaryRow.appendChild(el("span", "replay-primary-label", label));
+      return valueEl;
+    };
+    const add = (label: string, title?: string): HTMLElement => {
+      const keyEl = el("span", "replay-alt-key", label);
+      if (title) keyEl.title = title;
+      grid.appendChild(keyEl);
       const valueEl = el("span", "replay-alt-val", "—");
       grid.appendChild(valueEl);
       return valueEl;
     };
-    return { grid, add };
+    const children = (): HTMLElement[] =>
+      [...(primaryRow ? [primaryRow] : []), ...afterPrimary, ...(grid.children.length > 0 ? [grid] : [])];
+    return { add, addPrimary, afterPrimary, children };
   };
 
-  const alt = makeKvGrid();
-  const relValueEl = altitudesDown ? alt.add("Rel") : undefined;
-  const mslValueEl = altitudesDown && refAlt ? alt.add("MSL") : undefined;
+  const alt = makeMetrics();
+  const relValueEl = altitudesDown ? alt.addPrimary("above home") : undefined;
+  const aglValueEl = distBottom && distBottomValid ? alt.add("Above ground") : undefined;
+  const mslValueEl = altitudesDown && refAlt ? alt.add("Sea level", "Above mean sea level (MSL)") : undefined;
   const gpsAltValueEl = gpsAlt ? alt.add("GPS") : undefined;
-  const aglValueEl = distBottom && distBottomValid ? alt.add("AGL") : undefined;
   const baroValueEl = baroAlt ? alt.add("Baro") : undefined;
 
   // Ground speed (horizontal, works even without an airspeed sensor) and
   // climb rate (vertical) — both derived from the local-position velocity.
-  const speed = makeKvGrid();
-  const groundSpeedValueEl = vx && vy ? speed.add("GS") : undefined;
+  const speed = makeMetrics();
+  const groundSpeedValueEl = vx && vy ? speed.addPrimary("ground speed") : undefined;
   const climbValueEl = vz ? speed.add("Climb") : undefined;
 
   const batteryCards = batteries.map((battery) => {
-    const grid = makeKvGrid();
-    return {
-      battery, grid: grid.grid,
-      remainingEl: battery.remaining ? grid.add("Batt") : undefined,
-      voltageEl: battery.voltage ? grid.add("Volt") : undefined,
-      currentEl: battery.current ? grid.add("Curr") : undefined,
-    };
+    const metrics = makeMetrics();
+    // Remaining charge leads, with a level bar; voltage leads if the log has no charge estimate.
+    const remainingEl = battery.remaining ? metrics.addPrimary("remaining") : undefined;
+    let levelFill: HTMLElement | undefined;
+    if (remainingEl) {
+      const bar = el("div", "replay-battery-bar");
+      levelFill = el("div", "replay-battery-fill");
+      bar.appendChild(levelFill);
+      metrics.afterPrimary.push(bar);
+    }
+    const voltageEl = battery.voltage
+      ? (remainingEl ? metrics.add("Voltage") : metrics.addPrimary("voltage")) : undefined;
+    const currentEl = battery.current ? metrics.add("Current") : undefined;
+    return { battery, metrics, remainingEl, voltageEl, currentEl, levelFill };
   });
 
   // Airspeed gets its own larger, bolder readout rather than blending into
@@ -4023,12 +4121,9 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   }
   addCard(undefined, stateRow.children.length > 0 ? [stateRow] : []);
 
-  addCard("Altitude", alt.grid.children.length > 0 ? [alt.grid] : []);
+  addCard("Altitude", alt.children());
 
-  const speedChildren: HTMLElement[] = [];
-  if (speed.grid.children.length > 0) {
-    speedChildren.push(speed.grid);
-  }
+  const speedChildren: HTMLElement[] = speed.children();
   if (airspeed) {
     const airspeedRow = el("div", "replay-status-row replay-airspeed-row");
     airspeedRow.appendChild(el("span", "replay-airspeed-key", "Airspeed"));
@@ -4039,8 +4134,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   addCard("Speed", speedChildren);
 
   for (const card of batteryCards) {
-    addCard(batteryCards.length === 1 ? "Battery" : card.battery.name,
-      card.grid.children.length > 0 ? [card.grid] : []);
+    addCard(batteryCards.length === 1 ? "Battery" : card.battery.name, card.metrics.children());
   }
 
   if (hudLeft.children.length > 0) {
@@ -4089,7 +4183,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   pane.appendChild(canvasWrap);
 
   const REPLAY_PADDING_PX = 32;
-  const VEHICLE_ICON_PX = 10;
+  const VEHICLE_ICON_PX = 15;
   const MIN_VIEW_SCALE = 0.2;
   const MAX_VIEW_SCALE = 40;
 
@@ -4099,6 +4193,8 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   let viewScale = 1;
   let viewPanX = 0;
   let viewPanY = 0;
+  // Where the vehicle icon was last drawn (CSS px), for "Center on Vehicle".
+  let vehicleScreen: [number, number] | undefined;
 
   const draw = (index: number) => {
     const dpr = window.devicePixelRatio || 1;
@@ -4282,8 +4378,9 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     // blend into the traversed trail right behind it.
     if (Number.isFinite(xs[clampedIndex]!) && Number.isFinite(ys[clampedIndex]!)) {
       const [screenX, screenY] = toScreen(xs[clampedIndex]!, ys[clampedIndex]!);
+      vehicleScreen = [screenX, screenY];
       const heading = headings?.[clampedIndex];
-      drawVehicleIcon(ctx, screenX, screenY, heading, VEHICLE_ICON_PX, resolveColor("var(--ulog-series-8)"));
+      drawVehicleIcon(ctx, screenX, screenY, heading, VEHICLE_ICON_PX, resolveColor("var(--ulog-series-8)"), true);
     }
 
     // HUD text — armed/landed/mode/airspeed and two of the altitude
@@ -4295,41 +4392,49 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
 
     if (relValueEl && altitudesDown) {
       const v = altitudesDown[clampedIndex]!;
-      relValueEl.textContent = Number.isFinite(v) ? `${(-v).toFixed(1)} m` : "—";
+      setReading(relValueEl, Number.isFinite(v) ? `${(-v).toFixed(1)} m` : "—");
     }
     if (mslValueEl && altitudesDown && refAlt) {
       const rel = altitudesDown[clampedIndex]!;
       const ref = refAlt[clampedIndex]!;
-      mslValueEl.textContent = Number.isFinite(rel) && Number.isFinite(ref) ? `${(ref - rel).toFixed(1)} m` : "—";
+      setReading(mslValueEl, Number.isFinite(rel) && Number.isFinite(ref) ? `${(ref - rel).toFixed(1)} m` : "—");
     }
     if (gpsAltValueEl && gpsAlt) {
       const v = atOrBefore(gpsAlt);
-      gpsAltValueEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
+      setReading(gpsAltValueEl, Number.isFinite(v) ? `${v.toFixed(1)} m` : "—");
     }
     if (aglValueEl && distBottom && distBottomValid) {
       const valid = distBottomValid[clampedIndex] === 1;
       const v = distBottom[clampedIndex]!;
-      aglValueEl.textContent = valid && Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
+      setReading(aglValueEl, valid && Number.isFinite(v) ? `${v.toFixed(1)} m` : "—");
     }
     if (baroValueEl && baroAlt) {
       const v = atOrBefore(baroAlt);
-      baroValueEl.textContent = Number.isFinite(v) ? `${v.toFixed(1)} m` : "—";
+      setReading(baroValueEl, Number.isFinite(v) ? `${v.toFixed(1)} m` : "—");
     }
 
     if (groundSpeedValueEl && vx && vy) {
       const gs = Math.hypot(vx[clampedIndex]!, vy[clampedIndex]!);
-      groundSpeedValueEl.textContent = Number.isFinite(gs) ? `${gs.toFixed(1)} m/s` : "—";
+      setReading(groundSpeedValueEl, Number.isFinite(gs) ? `${gs.toFixed(1)} m/s` : "—");
     }
     if (climbValueEl && vz) {
       const climb = -vz[clampedIndex]!; // NED down-positive → up-positive climb
-      climbValueEl.textContent = Number.isFinite(climb) ? `${climb >= 0 ? "+" : ""}${climb.toFixed(1)} m/s` : "—";
+      setReading(climbValueEl, Number.isFinite(climb) ? `${climb >= 0 ? "+" : ""}${climb.toFixed(1)} m/s` : "—");
     }
 
     for (const card of batteryCards) {
       const readings = batteryReadingsAt(card.battery, times[clampedIndex]!);
-      if (card.remainingEl) card.remainingEl.textContent = readings.remaining;
-      if (card.voltageEl) card.voltageEl.textContent = readings.voltage;
-      if (card.currentEl) card.currentEl.textContent = readings.current;
+      if (card.remainingEl) setReading(card.remainingEl, readings.remaining);
+      if (card.voltageEl) setReading(card.voltageEl, readings.voltage);
+      if (card.currentEl) setReading(card.currentEl, readings.current);
+      if (card.levelFill) {
+        const percent = parseFloat(readings.remaining); // NaN while there is no reading
+        card.levelFill.style.width = Number.isFinite(percent) ? `${percent}%` : "0";
+        card.levelFill.classList.toggle("low", percent < 30);
+        card.levelFill.classList.toggle("critical", percent < 15);
+        card.remainingEl?.classList.toggle("low", percent < 30);
+        card.remainingEl?.classList.toggle("critical", percent < 15);
+      }
     }
 
     if (airspeed) {
@@ -4429,6 +4534,14 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     document.addEventListener("mousemove", onPanMove);
     document.addEventListener("mouseup", onPanEnd);
   });
+  centerBtn.addEventListener("click", () => {
+    if (!vehicleScreen) return;
+    // The pan is a plain screen-space offset, so shifting it by the icon's
+    // distance from the middle puts the icon there.
+    viewPanX += canvasWrap.clientWidth / 2 - vehicleScreen[0];
+    viewPanY += canvasWrap.clientHeight / 2 - vehicleScreen[1];
+    draw(Number(slider.value));
+  });
   canvasWrap.addEventListener("dblclick", () => {
     viewScale = 1;
     viewPanX = 0;
@@ -4469,8 +4582,7 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
   };
 
   const tick = () => {
-    const speed = Number(speedSelect.value);
-    const targetTimeSec = anchorTimeSec + ((performance.now() - anchorWallMs) / 1000) * speed;
+    const targetTimeSec = anchorTimeSec + ((performance.now() - anchorWallMs) / 1000) * anchoredSpeed;
     updateDisplay(findIndexAtOrBefore(times, targetTimeSec));
     if (targetTimeSec >= times[times.length - 1]!) {
       pausePlayback();
@@ -4495,6 +4607,20 @@ function renderReplayScene(pane: HTMLElement, data: ReplaySceneData): void {
     pausePlayback();
     updateDisplay(Number(slider.min));
   };
+
+  // The playhead is anchor + elapsed × speed, so a new speed must only apply
+  // from now on: re-anchor at where playback is this instant, or the new
+  // speed is applied to all the time already played and the vehicle jumps
+  // (forward when speeding up, backward when slowing down).
+  let anchoredSpeed = Number(speedSelect.value);
+  speedSelect.addEventListener("change", () => {
+    if (isPlaying) {
+      const now = performance.now();
+      anchorTimeSec += ((now - anchorWallMs) / 1000) * anchoredSpeed;
+      anchorWallMs = now;
+    }
+    anchoredSpeed = Number(speedSelect.value);
+  });
 
   playBtn.addEventListener("click", () => (isPlaying ? pausePlayback() : play()));
   stopBtn.addEventListener("click", stopPlayback);
@@ -4984,7 +5110,9 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
   for (const [key, value] of summary.info) {
     const row = el("tr");
     row.appendChild(el("td", "key", key));
-    row.appendChild(el("td", undefined, value));
+    const cell = el("td");
+    cell.appendChild(makeExpandableValue(value));
+    row.appendChild(cell);
     info.tbody.appendChild(row);
   }
   enableRowSelection(info.tbody);
@@ -5005,6 +5133,57 @@ function buildInfoPane(summary: LogSummary): HTMLElement {
 
 function isChangedFromDefault(param: ParameterInfo): boolean {
   return param.defaultValue != undefined && param.value !== param.defaultValue;
+}
+
+/** JSON objects/arrays re-indented for reading; anything else is returned as logged. */
+function prettyPrintIfJson(value: string): string {
+  const trimmed = value.trim();
+  if (!/^[[{]/.test(trimmed)) return value;
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * A table value kept to one truncated line until clicked, then shown in
+ * full: wrapped, line breaks preserved, JSON pretty-printed, and scrollable
+ * on its own if very long (some info entries are tens of kB). Click again
+ * to collapse. Short single-line values are left as plain text, unless
+ * `expandedValue` supplies different content to show when expanded.
+ */
+function makeExpandableValue(value: string, expandedValue?: () => Node): HTMLElement {
+  const pretty = prettyPrintIfJson(value);
+  const valueEl = el("div", "expandable-value", value);
+  if (expandedValue == undefined && value.length <= 40 && pretty === value && !value.includes("\n")) {
+    return valueEl;
+  }
+  valueEl.classList.add("expandable");
+  valueEl.title = "Click to show the whole value";
+  valueEl.addEventListener("click", () => {
+    // Drag-selecting text to copy it shouldn't also toggle.
+    if ((window.getSelection()?.toString() ?? "") !== "") return;
+    const expanded = valueEl.classList.toggle("expanded");
+    valueEl.replaceChildren(expanded ? (expandedValue?.() ?? pretty) : value);
+    valueEl.title = expanded ? "Click to collapse" : "Click to show the whole value";
+  });
+  return valueEl;
+}
+
+/**
+ * Shows a reading such as "12.3 m" with the number prominent and its unit
+ * small beside it. Text without a leading number ("—") is shown as is.
+ */
+function setReading(target: HTMLElement, text: string): void {
+  if (target.dataset.reading === text) return; // called every replay frame
+  target.dataset.reading = text;
+  const match = /^([+-]?\d[\d.]*)\s*(\S.*)$/.exec(text);
+  if (!match) {
+    target.textContent = text;
+    return;
+  }
+  target.replaceChildren(match[1]!, el("span", "replay-unit", match[2]!));
 }
 
 function makeStatTile(value: string, label: string, title?: string): HTMLElement {
@@ -5080,16 +5259,24 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
       },
     ),
   );
+  const referenceNote = el("span", "params-reference-note",
+    `Descriptions: ${parameterReferenceSource(summary, Object.keys(summary.parameterReferenceSources)[0] ?? "main")}`);
+  referenceNote.title = parameterReferenceExplanation(summary);
+  toolbar.appendChild(referenceNote);
   pane.appendChild(toolbar);
 
-  const { table, tbody } = makeResizableTable(["Parameter", "Value", "Default", ""], [220, 100, 100]);
-  table.querySelector("th:nth-child(3)")?.setAttribute("title", DEFAULT_VALUE_EXPLANATION);
+  const { table, tbody } = makeResizableTable(
+    ["Parameter", "Value", "", "Default", "Min", "Max", "Unit", "Description"], [220, 200, 90, 100, 70, 70, 60]);
+  table.querySelector("th:nth-child(4)")?.setAttribute("title", DEFAULT_VALUE_EXPLANATION);
+  for (const column of [5, 6, 7, 8]) {
+    table.querySelector(`th:nth-child(${column})`)?.setAttribute("title", parameterReferenceExplanation(summary));
+  }
   enableRowSelection(tbody);
   const render = (filter: string) => {
     tbody.textContent = "";
     let visibleIndex = 0;
     for (const param of summary.parameters) {
-      if (filter.trim() !== "" && !matchesSearchTerms(param.name, filter)) {
+      if (filter.trim() !== "" && !matchesSearchTerms(`${param.name} ${param.doc?.shortDesc ?? ""}`, filter)) {
         continue;
       }
       if (state.parameterQuickFilter === "default" && !isChangedFromDefault(param)) {
@@ -5098,7 +5285,7 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
       if (state.parameterQuickFilter === "flight" && param.changes.length === 0) {
         continue;
       }
-      for (const row of buildParameterRows(param, visibleIndex)) {
+      for (const row of buildParameterRows(param, visibleIndex, summary)) {
         tbody.appendChild(row);
       }
       visibleIndex++;
@@ -5117,19 +5304,124 @@ function buildParametersPane(summary: LogSummary): HTMLElement {
   return pane;
 }
 
+/** "PX4 v1.17.0 · 2026-05-13" for one of the versions the bundled parameter reference draws on. */
+function parameterReferenceSource(summary: LogSummary, source: string): string {
+  const version = source === "main" ? "main (unreleased)" : source;
+  return `PX4 ${version} · ${summary.parameterReferenceSources[source] ?? "unknown date"}`;
+}
+
+function parameterReferenceExplanation(summary: LogSummary): string {
+  const [primary, ...others] = Object.keys(summary.parameterReferenceSources);
+  return `From the PX4 parameter reference bundled with this extension: ${parameterReferenceSource(summary, primary ?? "main")}` +
+    (others.length > 0 ? `, with ${others.join(", ")} for parameters that release doesn't have` : "") +
+    ". Not from this log — the firmware that wrote the log may differ.";
+}
+
+/** Bit positions set in a non-negative integer, ascending (works past bit 31, unlike >>). */
+function setBits(value: number): number[] {
+  const bits: number[] = [];
+  if (!Number.isInteger(value) || value < 0) return bits;
+  for (let bit = 0; 2 ** bit <= value; bit++) {
+    if (Math.floor(value / 2 ** bit) % 2 === 1) bits.push(bit);
+  }
+  return bits;
+}
+
+/**
+ * A short note on what a parameter's current value means, shown beside it:
+ * an enum value's name, or which bits of a bitmask are set (their names are
+ * in the expanded description, where there is room for them).
+ */
+function parameterValueMeaning(value: number, doc: ParameterDoc): string | undefined {
+  if (doc.bitmask) {
+    if (!Number.isInteger(value) || value < 0) return undefined;
+    const bits = setBits(value);
+    return bits.length === 0 ? "none" : `bit${bits.length > 1 ? "s" : ""} ${bits.join(",")}`;
+  }
+  // The reference marks its own default ("Medium (Default)"); that says
+  // nothing about this value, so it is left out here.
+  return doc.values?.find(([v]) => v === value)?.[1].replace(/\s*\(default\)/gi, "").trim() || undefined;
+}
+
+/** Everything the reference says about a parameter, as shown when its description is expanded. */
+/** One line of an expanded parameter description; `active` marks the enum value or bit the log's value has set. */
+interface DocLine { text: string; active?: boolean }
+
+function parameterDocDetails(value: number, doc: ParameterDoc, source: string): DocLine[] {
+  const lines: DocLine[] = [{ text: doc.shortDesc }];
+  const blank = { text: "" };
+  if (doc.longDesc) lines.push(blank, { text: doc.longDesc });
+  if (doc.values) {
+    lines.push(blank, { text: "Values:" });
+    for (const [option, meaning] of doc.values) {
+      lines.push({ text: `${option}: ${meaning}`, active: option === value });
+    }
+  }
+  if (doc.bitmask) {
+    const set = new Set(setBits(value));
+    lines.push(blank, { text: "Bits:" });
+    for (const [bit, meaning] of doc.bitmask) {
+      lines.push({ text: `${bit}: ${meaning}`, active: set.has(bit) });
+    }
+    const named = new Set(doc.bitmask.map(([bit]) => bit));
+    for (const bit of [...set].filter((b) => !named.has(b))) {
+      lines.push({ text: `${bit}: (not in the reference)`, active: true });
+    }
+  }
+  const facts = [
+    doc.default != undefined ? `Reference default: ${formatNumber(doc.default)}` : undefined,
+    doc.rebootRequired ? "Reboot required" : undefined,
+  ].filter((fact) => fact != undefined);
+  if (facts.length > 0) lines.push(blank, { text: facts.join(" · ") });
+  lines.push(blank, { text: source });
+  return lines;
+}
+
+/** The lines as DOM, one per row, the active ones highlighted. */
+function renderDocLines(lines: DocLine[]): Node {
+  const fragment = document.createDocumentFragment();
+  lines.forEach((line, i) => {
+    fragment.appendChild(line.active ? el("span", "param-doc-active", line.text) : document.createTextNode(line.text));
+    if (i < lines.length - 1) fragment.appendChild(document.createTextNode("\n"));
+  });
+  return fragment;
+}
+
 /** One row for a parameter, plus an optional second row with its change history. */
-function buildParameterRows(param: ParameterInfo, visibleIndex: number): HTMLElement[] {
+function buildParameterRows(param: ParameterInfo, visibleIndex: number, summary: LogSummary): HTMLElement[] {
   const row = el("tr", visibleIndex % 2 === 1 ? "param-row zebra-row" : "param-row");
   row.appendChild(el("td", "key param-name", param.name));
 
   const changed = isChangedFromDefault(param);
-  row.appendChild(el("td", changed ? "num value-changed" : "num", formatNumber(param.value)));
+  // Enum and bitmask parameters: what the value means, from the PX4 reference, beside the number.
+  const doc = param.doc;
+  const meaning = doc ? parameterValueMeaning(param.value, doc) : undefined;
+  const valueCell = el("td", changed ? "num value-changed" : "num",
+    meaning != undefined ? `${formatNumber(param.value)} (${meaning})` : formatNumber(param.value));
+  if (meaning != undefined) valueCell.title = valueCell.textContent ?? "";
+  row.appendChild(valueCell);
+  // Right after the value it qualifies: the mid-flight change badge.
+  const flagCell = el("td", "param-flags");
+  row.appendChild(flagCell);
   row.appendChild(
     el("td", "num muted", param.defaultValue != undefined ? formatNumber(param.defaultValue) : "—"),
   );
 
-  const flagCell = el("td", "param-flags");
-  row.appendChild(flagCell);
+  row.appendChild(el("td", "num muted", doc?.min != undefined ? formatNumber(doc.min) : ""));
+  row.appendChild(el("td", "num muted", doc?.max != undefined ? formatNumber(doc.max) : ""));
+  row.appendChild(el("td", "muted", doc?.units ?? ""));
+
+  const descriptionCell = el("td", "param-description");
+  if (doc) {
+    descriptionCell.appendChild(makeExpandableValue(doc.shortDesc, () =>
+      renderDocLines(parameterDocDetails(param.value, doc, parameterReferenceSource(summary, doc.source)))));
+  } else {
+    const missing = el("span", "param-not-in-reference", "Not in the PX4 reference");
+    missing.title = `Upstream PX4 (${Object.keys(summary.parameterReferenceSources).join(", ")}) has no parameter with this name: ` +
+      "likely a vendor or fork parameter, or one removed from PX4 some releases ago.";
+    descriptionCell.appendChild(missing);
+  }
+  row.appendChild(descriptionCell);
 
   if (param.changes.length === 0) {
     return [row];
@@ -5160,7 +5452,7 @@ function buildParameterRows(param: ParameterInfo, visibleIndex: number): HTMLEle
   });
 
   const historyCell = el("td");
-  historyCell.colSpan = 4;
+  historyCell.colSpan = 8;
   historyCell.appendChild(history);
   const historyRow = el("tr", "param-history-container");
   historyRow.appendChild(historyCell);

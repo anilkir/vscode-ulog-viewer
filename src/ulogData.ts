@@ -6,14 +6,22 @@
  * `ulog.open()`/`readMessages()` are never used at all.
  */
 import { quaternionToRpy, quaternionSource, odometryTopics, rpyDescription } from "./quaternion";
+import {
+  canCounterDescription, canRecField, canTecField, decodeCanCounters, errorCountField, errorCountTypeField,
+  errorCountTypeNames, hasErrorCountType,
+} from "./escErrorCount";
 import { MessageType, type FieldPrimitive, type Filelike, type MessageDefinition, type Subscription } from "@foxglove/ulog";
 import { scanGpsDump, scanGpsDumpColumns, scanTopicColumns, scanTopicStrings, type UlogFileScanResult } from "./paramScan";
+import px4Parameters from "./px4Parameters.json";
+import px4Messages from "./px4Messages.json";
+import type { ValueNames } from "./valueNames";
 import type {
   FieldInfo,
   FieldStats,
   FormatDefinitionInfo,
   LogSummary,
   MessageTypeCount,
+  ParameterDoc,
   StringFieldInfo,
   TopicInfo,
   TopicStrings,
@@ -37,6 +45,33 @@ export function summarizeFieldValues(values: Float64Array): FieldStats | undefin
     validCount++;
   }
   return validCount ? { min, max, validCount, sampleCount: values.length } : undefined;
+}
+
+/** Looks a parameter up in the bundled PX4 parameter reference. */
+export function parameterDoc(name: string): ParameterDoc | undefined {
+  const docs = px4Parameters.parameters as unknown as Record<string, ParameterDoc>;
+  return Object.hasOwn(docs, name) ? docs[name] : undefined;
+}
+
+/** PX4 version -> the date (YYYY-MM-DD) it was published, for each version the bundled reference draws on, in priority order. */
+export const parameterReferenceSources: Record<string, string> = px4Parameters.sources;
+
+/**
+ * Names of a field's values, from the bundled PX4 message definitions.
+ * `format` is the ULog format the field is declared in (a topic, or a nested
+ * struct type such as esc_report). Only integer fields qualify: the same
+ * message can have changed since the firmware that wrote the log.
+ */
+export function fieldValueNames(format: string, field: string, type: string): ValueNames | undefined {
+  if (!/^u?int\d+_t$/.test(type)) return undefined;
+  const messages = px4Messages.messages as unknown as Record<string, Record<string, ValueNames>>;
+  const fields = Object.hasOwn(messages, format) ? messages[format]! : undefined;
+  return fields && Object.hasOwn(fields, field) ? fields[field] : undefined;
+}
+
+function namedField(format: string, declared: string, name: string, type: string): FieldInfo {
+  const valueNames = fieldValueNames(format, declared, type);
+  return valueNames ? { name, type, valueNames } : { name, type };
 }
 
 /**
@@ -70,6 +105,7 @@ export function plottableFields(subscription: Subscription, definitions: Map<str
         continue;
       }
       const instanceCount = field.arrayLength ?? 1;
+      const typedErrorCount = hasErrorCountType(nestedDef);
       for (let instance = 0; instance < instanceCount; instance++) {
         const prefix = field.arrayLength != undefined ? `${field.name}[${instance}]` : field.name;
         for (const inner of nestedDef.fields) {
@@ -82,21 +118,33 @@ export function plottableFields(subscription: Subscription, definitions: Map<str
           }
           if (inner.arrayLength != undefined) {
             for (let i = 0; i < inner.arrayLength; i++) {
-              fields.push({ name: `${prefix}.${inner.name}[${i}]`, type: inner.type });
+              fields.push(namedField(field.type, inner.name, `${prefix}.${inner.name}[${i}]`, inner.type));
             }
+          } else if (typedErrorCount && inner.name === "esc_errorcount_type") {
+            const named = namedField(field.type, inner.name, errorCountTypeField(prefix), inner.type);
+            fields.push(named.valueNames ? named : { ...named, valueNames: errorCountTypeNames });
           } else {
-            fields.push({ name: `${prefix}.${inner.name}`, type: inner.type });
+            fields.push(namedField(field.type, inner.name, `${prefix}.${inner.name}`, inner.type));
           }
+        }
+        if (typedErrorCount) {
+          // Listed with the instance's own fields (same sidebar group).
+          fields.push(
+            { name: canTecField(prefix), type: "count",
+              derived: { group: prefix, label: "CAN TEC (decoded)", description: canCounterDescription } },
+            { name: canRecField(prefix), type: "count",
+              derived: { group: prefix, label: "CAN REC (decoded)", description: canCounterDescription } },
+          );
         }
       }
       continue;
     }
     if (field.arrayLength != undefined) {
       for (let i = 0; i < field.arrayLength; i++) {
-        fields.push({ name: `${field.name}[${i}]`, type: field.type });
+        fields.push(namedField(subscription.name, field.name, `${field.name}[${i}]`, field.type));
       }
     } else {
-      fields.push({ name: field.name, type: field.type });
+      fields.push(namedField(subscription.name, field.name, field.name, field.type));
     }
   }
   const source = quaternionSource(subscription.name);
@@ -153,14 +201,34 @@ export async function extractTopicColumns(filelike: Filelike, scan: UlogFileScan
   const data = await scanTopicColumns(filelike, scan, msgId);
   const subscription = scan.subscriptions.get(msgId);
   if (!subscription || scan.untrustedTopics.some((topic) => topic.msgId === msgId)) return data;
-  return addDerivedRpyColumns(data, subscription, scan.definitions);
+  return addDerivedCanCounterColumns(addDerivedRpyColumns(data, subscription, scan.definitions), subscription, scan.definitions);
+}
+
+/** Adds each esc_report's decoded CAN TEC/REC (see escErrorCount.ts), if the log says what its error count means. */
+export function addDerivedCanCounterColumns(
+  data: TopicColumns, subscription: Subscription, definitions: Map<string, MessageDefinition>,
+): TopicColumns {
+  for (const field of subscription.fields) {
+    const nestedDef = field.isComplex ? definitions.get(field.type) : undefined;
+    if (!nestedDef || !hasErrorCountType(nestedDef)) continue;
+    for (let instance = 0; instance < (field.arrayLength ?? 1); instance++) {
+      const prefix = field.arrayLength != undefined ? `${field.name}[${instance}]` : field.name;
+      const counts = data.columns.get(errorCountField(prefix));
+      const types = data.columns.get(errorCountTypeField(prefix));
+      if (!counts || !types || counts.length !== types.length) continue;
+      const { tec, rec } = decodeCanCounters(counts, types);
+      data.columns.set(canTecField(prefix), tec);
+      data.columns.set(canRecField(prefix), rec);
+    }
+  }
+  return data;
 }
 
 /** Adds computed angles on the original sample timeline, preserving gaps. */
 export function addDerivedRpyColumns(
   data: TopicColumns, subscription: Subscription, definitions: Map<string, MessageDefinition>,
 ): TopicColumns {
-  const derived = plottableFields(subscription, definitions).filter((f) => f.derived);
+  const derived = plottableFields(subscription, definitions).filter((f) => f.name.startsWith("derived_rpy_"));
   if (derived.length === 0) return data;
   const source = quaternionSource(subscription.name)!;
   const components = [0, 1, 2, 3].map((i) => data.columns.get(`${source}[${i}]`));
@@ -214,6 +282,7 @@ export function buildSummary(scan: UlogFileScanResult, fileName: string, fileSiz
     .map(([name, value]) => ({
       name,
       value,
+      doc: parameterDoc(name),
       defaultValue: scan.defaultsByParam.get(name),
       changes: meaningfulParameterChanges(value, scan.changesByParam.get(name) ?? []),
     }))
@@ -227,6 +296,7 @@ export function buildSummary(scan: UlogFileScanResult, fileName: string, fileSiz
     durationSec: Math.max(0, endSec - startSec),
     info,
     parameters,
+    parameterReferenceSources,
     topics: buildTopics(scan),
     logMessages: scan.logMessages,
     messageCount: scan.messageCount,

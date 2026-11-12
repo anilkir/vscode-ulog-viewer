@@ -1,3 +1,5 @@
+import type { ValueNames } from "./valueNames";
+
 /**
  * Message protocol shared between the extension host and the webview.
  *
@@ -19,6 +21,9 @@ export interface FieldInfo {
   type: string;
   /** Present for computed fields; never a raw logged value. */
   derived?: { group: string; label: string; description: string };
+  /** Names of this field's values (enum constants or bitmask bits), for
+   *  fields PX4's message definitions name them for — see valueNames.ts. */
+  valueNames?: ValueNames;
 }
 
 /**
@@ -94,9 +99,35 @@ export interface LogMessageInfo {
   message: string;
 }
 
+/**
+ * A parameter's entry in the PX4 parameter reference bundled with the
+ * extension (src/px4Parameters.json, see scripts/update-px4-params.mjs).
+ * It describes upstream PX4 at the time it was fetched, not the firmware
+ * that wrote the log, so ranges and defaults can differ from the vehicle's.
+ */
+export interface ParameterDoc {
+  shortDesc: string;
+  longDesc?: string;
+  default?: number;
+  min?: number;
+  max?: number;
+  units?: string;
+  /** Enum values as [value, meaning]. */
+  values?: [number, string][];
+  /** Bitmask bits as [bit index, meaning]. */
+  bitmask?: [number, string][];
+  rebootRequired?: boolean;
+  /** PX4 version this entry was taken from: a key of
+   *  LogSummary.parameterReferenceSources, e.g. "v1.17.0" or "main". */
+  source: string;
+}
+
 export interface ParameterInfo {
   name: string;
   value: number;
+  /** Undefined for parameters the bundled reference doesn't know (vendor
+   *  or fork parameters, or ones removed upstream long ago). */
+  doc?: ParameterDoc;
   /**
    * PX4's recorded default value for this build, from the log's own 'Q'
    * (ParameterDefault) messages — the default actually effective on the
@@ -160,6 +191,12 @@ export interface LogSummary {
   /** Information section key/value pairs, stringified for display. */
   info: [string, string][];
   parameters: ParameterInfo[];
+  /** Which PX4 versions the bundled parameter reference (ParameterInfo.doc)
+   *  was built from, in priority order: version ("v1.17.0", or "main" for
+   *  the unreleased main branch) -> the date (YYYY-MM-DD) it was published.
+   *  The first is the latest release; the rest only supply parameters it
+   *  doesn't have. */
+  parameterReferenceSources: Record<string, string>;
   topics: TopicInfo[];
   logMessages: LogMessageInfo[];
   messageCount: number;

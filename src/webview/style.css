@@ -792,18 +792,84 @@ body.resizing-column {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: color-mix(in srgb, var(--vscode-editor-background) 74%, transparent);
-  padding: 4px 7px;
-  border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+  /* Opaque enough that the numbers stay readable over busy map tiles. */
+  background: color-mix(in srgb, var(--vscode-editor-background) 88%, transparent);
+  padding: 5px 9px 6px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  min-width: 128px;
+  box-sizing: border-box;
+}
+
+/* The one number of a card that matters most: big, with its unit and what
+ * it is in small print beside it. */
+.replay-primary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.replay-primary-val {
+  font-size: 1.55em;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-foreground);
+}
+
+.replay-primary-label {
+  font-size: 0.78em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.replay-unit {
+  margin-left: 2px;
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--vscode-descriptionForeground);
+}
+
+.replay-primary-val .replay-unit {
+  font-size: 0.55em;
+}
+
+.replay-primary-val.low {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.replay-primary-val.critical {
+  color: var(--vscode-errorForeground, #f14c4c);
+}
+
+.replay-battery-bar {
+  height: 4px;
+  margin: 1px 0 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--vscode-foreground) 16%, transparent);
+  overflow: hidden;
+}
+
+.replay-battery-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--vscode-charts-green, #89d185);
+}
+
+.replay-battery-fill.low {
+  background: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.replay-battery-fill.critical {
+  background: var(--vscode-errorForeground, #f14c4c);
 }
 
 .replay-card-title {
   font-size: 0.68em;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   color: var(--vscode-descriptionForeground);
-  opacity: 0.85;
   margin-bottom: 1px;
 }
 
@@ -818,9 +884,9 @@ body.resizing-column {
 .replay-alt-grid {
   display: grid;
   grid-template-columns: auto auto;
-  column-gap: 8px;
+  column-gap: 12px;
   row-gap: 1px;
-  font-size: 0.85em;
+  font-size: 0.88em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -831,6 +897,7 @@ body.resizing-column {
 .replay-alt-val {
   color: var(--vscode-foreground);
   text-align: right;
+  font-weight: 600;
 }
 
 /* Airspeed gets a visibly bigger/bolder number than the rest of the HUD —
@@ -2253,4 +2320,43 @@ tr.row-selected td {
 .plot-marker-legend-toggle:hover {
   color: var(--vscode-foreground);
   background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* Info values: one truncated line until clicked (see makeExpandableValue). */
+.expandable-value {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.expandable-value.expandable {
+  cursor: pointer;
+}
+
+.expandable-value.expanded {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  max-height: 60vh;
+  font-family: var(--vscode-editor-font-family, monospace);
+  user-select: text;
+}
+
+.param-not-in-reference {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.params-reference-note {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+/* The enum value or bitmask bits a parameter currently has, in its expanded description. */
+.param-doc-active {
+  color: var(--vscode-textLink-foreground);
+  font-weight: 600;
 }
